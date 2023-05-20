@@ -16,13 +16,22 @@ pub fn fixed_xor(s: &[u8], t: &[u8]) -> Vec<u8> {
 mod tests {
     use super::*;
 
+    fn hex_to_utf8(hex: &str) -> Result<String> {
+        let bytes = hex::decode(hex)?;
+        let s = String::from_utf8(bytes)?;
+        Ok(s)
+    }
+
     #[test]
-    fn problem_1_1() {
+    fn problem_1_1() -> Result<()> {
         let input = "49276d206b696c6c696e6720796f757220627261696e206c696b65206120706f69736f6e6f7573206d757368726f6f6d";
         let expected = "SSdtIGtpbGxpbmcgeW91ciBicmFpbiBsaWtlIGEgcG9pc29ub3VzIG11c2hyb29t";
 
         let base64 = hex_to_base64(input).unwrap();
         assert_eq!(base64, expected);
+
+        eprintln!("{}", hex_to_utf8(input)?);
+        Ok(())
     }
 
     #[test]
@@ -33,6 +42,9 @@ mod tests {
 
         let xor = fixed_xor(&hex::decode(s)?, &hex::decode(t)?);
         assert_eq!(hex::encode(xor), expected);
+
+        eprintln!("{}", hex_to_utf8(t)?);
+        eprintln!("{}", hex_to_utf8(expected)?);
         Ok(())
     }
 }
