@@ -7,9 +7,35 @@ pub fn hex_to_base64(hex: &str) -> Result<String> {
     Ok(BASE64_STANDARD_NO_PAD.encode(bytes))
 }
 
-pub fn fixed_xor(s: &[u8], t: &[u8]) -> Vec<u8> {
-    assert_eq!(s.len(), t.len());
-    zip(s, t).map(|(x, y)| x ^ y).collect()
+pub fn xor_with_key(bytes: &[u8], key: &[u8]) -> Vec<u8> {
+    let key_repeated = key.iter().cycle();
+    zip(bytes, key_repeated).map(|(x, y)| x ^ y).collect()
+}
+
+/// Score `s` based on letter frequencies.
+/// 
+/// English text should have a higher score than random noise.
+pub fn string_score(s: &str) -> u32 {
+    s.chars().map(letter_score).sum()
+}
+
+fn letter_score(c: char) -> u32 {
+    match c.to_ascii_uppercase() {
+        ' ' => 13,
+        'E' => 12,
+        'T' => 11,
+        'A' => 10,
+        'O' => 9,
+        'I' => 8,
+        'N' => 7,
+        'S' => 6,
+        'H' => 5,
+        'R' => 4,
+        'D' => 3,
+        'L' => 2,
+        'U' => 1,
+        _ => 0,
+    }
 }
 
 #[cfg(test)]
@@ -40,11 +66,31 @@ mod tests {
         let t = "686974207468652062756c6c277320657965";
         let expected = "746865206b696420646f6e277420706c6179";
 
-        let xor = fixed_xor(&hex::decode(s)?, &hex::decode(t)?);
+        let xor = xor_with_key(&hex::decode(s)?, &hex::decode(t)?);
         assert_eq!(hex::encode(xor), expected);
 
         eprintln!("{}", hex_to_utf8(t)?);
         eprintln!("{}", hex_to_utf8(expected)?);
+        Ok(())
+    }
+
+    #[test]
+    fn problem_1_3() -> Result<()> {
+        let input = "1b37373331363f78151b7f2b783431333d78397828372d363c78373e783a393b3736";
+        let bytes = hex::decode(input)?;
+
+        let (best_score, answer) = (0..=u8::MAX).filter_map(|key| {
+            let guess = xor_with_key(&bytes, &[key]);
+            let s = String::from_utf8(guess).ok()?;
+            let score = string_score(&s);
+            Some((dbg!(score), s))
+        }).max().expect("at least one key must produce ascii bytes");
+
+        dbg!(best_score, &answer);
+
+        let expected_base64 = "Q29va2luZyBNQydzIGxpa2UgYSBwb3VuZCBvZiBiYWNvbg";
+        assert_eq!(BASE64_STANDARD_NO_PAD.encode(&answer), expected_base64);
+
         Ok(())
     }
 }
