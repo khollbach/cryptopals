@@ -2,7 +2,7 @@
 
 use std::{
     fs::File,
-    io::{prelude::*, BufReader},
+    io::{self, prelude::*, BufReader},
     iter::zip,
     path::PathBuf,
     rc::Rc,
@@ -28,6 +28,10 @@ fn problem_1_1() -> Result<()> {
 
 fn base64_encode(bytes: impl AsRef<[u8]>) -> String {
     BASE64_STANDARD_NO_PAD.encode(bytes)
+}
+
+fn base64_decode(bytes: impl AsRef<[u8]>) -> Result<Vec<u8>> {
+    Ok(BASE64_STANDARD.decode(bytes)?)
 }
 
 fn hex_to_utf8(hex: &str) -> Result<String> {
@@ -157,4 +161,39 @@ fn problem_1_5() {
     let encoded = xor_with_key(input, key);
     let expected_hex = "0b3637272a2b2e63622c2e69692a23693a2a3c6324202d623d63343c2a26226324272765272a282b2f20430a652e2c652a3124333a653e2b2027630c692b20283165286326302e27282f";
     assert_eq!(hex::encode(encoded), expected_hex);
+}
+
+#[test]
+fn problem_1_6() -> Result<()> {
+    // let s = b"this is a test";
+    // let t = b"wokka wokka!!!";
+    // dbg!(s, t, hamming_distance(s, t));
+
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("inputs/1-6");
+    let file = File::open(path)?;
+    let base64: Vec<_> = BufReader::new(file)
+        .lines()
+        .map_ok(String::into_bytes)
+        .flatten_ok()
+        .collect::<io::Result<_>>()?;
+    let bytes = base64_decode(base64)?;
+
+    let key_size = (2..=40)
+        .map(|n| {
+            let first_block = &bytes[..n];
+            let second_block = &bytes[n..n * 2];
+            let d = hamming_distance(first_block, second_block);
+            let score = d as f64 / n as f64;
+            (n, score)
+        })
+        .min_by(|(_, score1), (_, score2)| f64::total_cmp(score1, score2));
+
+    // left off before step 5. / 6.
+
+    Ok(())
+}
+
+fn hamming_distance(s: &[u8], t: &[u8]) -> usize {
+    assert_eq!(s.len(), t.len());
+    zip(s, t).map(|(x, y)| (x ^ y).count_ones() as usize).sum()
 }
