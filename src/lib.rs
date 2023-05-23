@@ -5,10 +5,9 @@ use std::{
     io::{self, prelude::*, BufReader},
     iter::zip,
     path::PathBuf,
-    rc::Rc,
 };
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use base64::prelude::*;
 use itertools::Itertools;
 
@@ -66,48 +65,58 @@ fn problem_1_3() -> Result<()> {
     let expected = "Q29va2luZyBNQydzIGxpa2UgYSBwb3VuZCBvZiBiYWNvbg";
 
     let bytes = hex::decode(input)?;
+    let key = best_key(&bytes);
+    let decoded = xor_with_key(&bytes, &[key]);
+    let text = String::from_utf8(decoded.clone())?;
 
-    let (best_score, answer) = (0..=u8::MAX)
-        .filter_map(|key| try_decode(&bytes, key))
-        .max_by_key(|&(score, _)| score)
-        .context("some key must produce ascii bytes")?;
-
-    dbg!(best_score, &answer);
-    assert_eq!(base64_encode(&answer), expected);
+    dbg!(&text);
+    assert_eq!(base64_encode(&decoded), expected);
 
     Ok(())
 }
 
 /// Helper function for problem 1-3.
-fn try_decode(bytes: &[u8], key: u8) -> Option<(u32, String)> {
+fn score(bytes: &[u8], key: u8) -> u32 {
     let guess = xor_with_key(&bytes, &[key]);
-    let s = String::from_utf8(guess).ok()?;
-    let score = string_score(&s);
-    Some((score, s))
+    bytes_score(&guess)
 }
 
 /// Score `s` based on letter frequencies.
 ///
 /// English text should have a higher score than random noise.
-fn string_score(s: &str) -> u32 {
-    s.chars().map(letter_score).sum()
+fn bytes_score(s: &[u8]) -> u32 {
+    s.iter().copied().map(letter_score).sum()
 }
 
-fn letter_score(c: char) -> u32 {
-    match c.to_ascii_uppercase() {
-        ' ' => 13,
-        'E' => 12,
-        'T' => 11,
-        'A' => 10,
-        'O' => 9,
-        'I' => 8,
-        'N' => 7,
-        'S' => 6,
-        'H' => 5,
-        'R' => 4,
-        'D' => 3,
-        'L' => 2,
-        'U' => 1,
+fn letter_score(byte: u8) -> u32 {
+    match byte.to_ascii_uppercase() {
+        b' ' => 150,
+        b'E' => 130,
+        b'T' => 91,
+        b'A' => 82,
+        b'O' => 75,
+        b'I' => 70,
+        b'N' => 67,
+        b'S' => 63,
+        b'H' => 61,
+        b'R' => 60,
+        b'D' => 43,
+        b'L' => 40,
+        b'C' => 28,
+        b'U' => 28,
+        b'M' => 24,
+        b'W' => 24,
+        b'F' => 22,
+        b'G' => 20,
+        b'Y' => 20,
+        b'P' => 19,
+        b'B' => 15,
+        b'V' => 10,
+        b'K' => 8,
+        b'J' => 2,
+        b'X' => 2,
+        b'Q' => 1,
+        b'Z' => 1,
         _ => 0,
     }
 }
@@ -115,26 +124,32 @@ fn letter_score(c: char) -> u32 {
 #[test]
 fn problem_1_4() -> Result<()> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("inputs/1-4");
-    let file = File::open(path)?;
+    let _file = File::open(path)?;
 
-    let mut err = anyhow::Ok(());
-    let (best_score, answer) = BufReader::new(file)
-        .lines()
-        .map(|line| Ok(hex::decode(&line?)?))
-        .scan(&mut err, ok)
-        .map(Rc::new)
-        .cartesian_product(0..=u8::MAX)
-        .filter_map(|(bytes, key)| try_decode(&bytes, key))
-        .max_by_key(|&(score, _)| score)
-        .context("some (line, key) pair must produce ascii bytes")?;
-    err?;
+    // let mut err = anyhow::Ok(());
+    // let (best_score, answer) = BufReader::new(file)
+    //     .lines()
+    //     .map(|line| Ok(hex::decode(&line?)?))
+    //     .scan(&mut err, ok)
+    //     .map(Rc::new)
+    //     .cartesian_product(0..=u8::MAX)
+    //     .filter_map(|(bytes, key)| try_decode(&bytes, key))
+    //     .max_by_key(|&(score, _)| score)
+    //     .context("some (line, key) pair must produce ascii bytes")?;
+    // err?;
 
-    dbg!(best_score, &answer);
+    // dbg!(best_score, &answer);
 
-    let expected_base64 = "Tm93IHRoYXQgdGhlIHBhcnR5IGlzIGp1bXBpbmcK";
-    assert_eq!(base64_encode(&answer), expected_base64);
+    // let expected_base64 = "Tm93IHRoYXQgdGhlIHBhcnR5IGlzIGp1bXBpbmcK";
+    // assert_eq!(base64_encode(&answer), expected_base64);
 
     Ok(())
+}
+
+fn best_key(encoded_bytes: &[u8]) -> u8 {
+    (0..=u8::MAX)
+        .max_by_key(|&key| score(encoded_bytes, key))
+        .unwrap()
 }
 
 /// Like `result.ok()` but doesn't discard the error.
@@ -165,10 +180,6 @@ fn problem_1_5() {
 
 #[test]
 fn problem_1_6() -> Result<()> {
-    // let s = b"this is a test";
-    // let t = b"wokka wokka!!!";
-    // dbg!(s, t, hamming_distance(s, t));
-
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("inputs/1-6");
     let file = File::open(path)?;
     let base64: Vec<_> = BufReader::new(file)
@@ -178,22 +189,79 @@ fn problem_1_6() -> Result<()> {
         .collect::<io::Result<_>>()?;
     let bytes = base64_decode(base64)?;
 
-    let key_size = (2..=40)
-        .map(|n| {
-            let first_block = &bytes[..n];
-            let second_block = &bytes[n..n * 2];
-            let d = hamming_distance(first_block, second_block);
-            let score = d as f64 / n as f64;
-            (n, score)
-        })
-        .min_by(|(_, score1), (_, score2)| f64::total_cmp(score1, score2));
+    let key_len = best_key_len(&bytes);
+    dbg!(key_len);
 
-    // left off before step 5. / 6.
+    let cols = transpose(&bytes, key_len);
+
+    let key_bytes: Vec<u8> = cols.into_iter().map(|col| best_key(&col)).collect();
+
+    // dbg!(&key_bytes, String::from_utf8(&key_bytes));
+
+    let decoded = xor_with_key(&bytes, &key_bytes);
+    let text = String::from_utf8(decoded);
+    dbg!(text)?;
 
     Ok(())
 }
 
-fn hamming_distance(s: &[u8], t: &[u8]) -> usize {
+fn best_key_len(bytes: &[u8]) -> usize {
+    let (key_len, _score) = (2..=40)
+        .map(|n| {
+            let chunk_count = 4;
+            let num_combinations = chunk_count * (chunk_count - 1) / 2;
+            let avg_dist = bytes
+                .chunks(n)
+                .take(chunk_count)
+                .tuple_combinations()
+                .map(|(chunk1, chunk2)| normalized_hamming_distance(chunk1, chunk2))
+                .sum::<f64>()
+                / num_combinations as f64;
+
+            (n, avg_dist)
+        })
+        .min_by(|(_, score1), (_, score2)| f64::total_cmp(score1, score2))
+        .unwrap();
+    key_len
+}
+
+#[test]
+fn test_hamming() {
+    let s = b"this is a test";
+    let t = b"wokka wokka!!!";
+    let n = s.len();
+
+    let d = normalized_hamming_distance(s, t) * n as f64;
+    assert_eq!(d.round() as usize, 37);
+}
+
+fn normalized_hamming_distance(s: &[u8], t: &[u8]) -> f64 {
     assert_eq!(s.len(), t.len());
-    zip(s, t).map(|(x, y)| (x ^ y).count_ones() as usize).sum()
+    let n = s.len();
+
+    let d: usize = zip(s, t).map(|(x, y)| (x ^ y).count_ones() as usize).sum();
+    d as f64 / n as f64
+}
+
+#[test]
+fn test_transpose() {
+    let bytes: Vec<_> = (0..100).collect();
+    let cols = transpose(&bytes, 7);
+
+    for (i, col) in cols.into_iter().enumerate() {
+        assert!(col.into_iter().all(|x| x % 7 == i as u8));
+    }
+}
+
+fn transpose(bytes: &[u8], row_len: usize) -> Vec<Vec<u8>> {
+    let num_cols = row_len;
+
+    bytes
+        .chunks(row_len)
+        .fold(vec![vec![]; num_cols], |mut cols, row| {
+            for (col, &x) in zip(&mut cols, row) {
+                col.push(x);
+            }
+            cols
+        })
 }
