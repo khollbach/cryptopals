@@ -1,13 +1,15 @@
 #![cfg(test)]
 
 use std::{
+    collections::{HashSet, HashMap},
     fs::File,
     io::{self, prelude::*, BufReader},
     iter::zip,
     path::PathBuf,
+    str,
 };
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use base64::prelude::*;
 use itertools::Itertools;
 use openssl::symm::{decrypt, Cipher};
@@ -302,4 +304,46 @@ fn count_occurances(mut s: &str, word: &str) -> usize {
         s = &s[i + word.len()..];
     }
     count
+}
+
+#[test]
+fn problem_1_8() -> Result<()> {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("inputs/1-8");
+    let file = File::open(path)?;
+
+    let mut err = Ok(());
+    let (answer,) = BufReader::new(file)
+        .lines()
+        // Stop at the first error; yield only successful values.
+        .scan(&mut err, ok)
+        // Note that we don't bother to hex-decode the line.
+        // Repeated blocks are still repeated blocks, regardless of whether
+        // you're looking at hex, or at bytes.
+        .filter(|line| detect_aes_ecb(line.as_bytes()))
+        .collect_tuple()
+        .context("there should be exactly one suspect")?;
+    err?;
+
+    let mut seen = HashMap::new();
+    for (i, chunk) in answer.as_bytes().chunks(16).enumerate() {
+        // Print the chunk, and whether we've seen it before.
+        eprint!("{i}: {}", str::from_utf8(chunk)?);
+        if let Some(idx) = seen.get(chunk) {
+            eprint!(" *** ({idx}) ***");
+        }
+        eprintln!();
+
+        seen.entry(chunk).or_insert(i);
+    }
+
+    Ok(())
+}
+
+fn detect_aes_ecb(bytes: &[u8]) -> bool {
+    let mut seen = HashSet::new();
+    bytes.chunks(16).any(|chunk| {
+        let repeated = seen.contains(chunk);
+        seen.insert(chunk);
+        repeated
+    })
 }
