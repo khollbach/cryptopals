@@ -10,6 +10,7 @@ use std::{
 use anyhow::Result;
 use base64::prelude::*;
 use itertools::Itertools;
+use openssl::symm::{decrypt, Cipher};
 
 #[test]
 fn problem_1_1() -> Result<()> {
@@ -264,4 +265,41 @@ fn transpose(bytes: &[u8], row_len: usize) -> Vec<Vec<u8>> {
             }
             cols
         })
+}
+
+#[test]
+fn problem_1_7() -> Result<()> {
+    let key = b"YELLOW SUBMARINE";
+
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("inputs/1-7");
+    let file = File::open(path)?;
+    let base64: Vec<_> = BufReader::new(file)
+        .lines()
+        .map_ok(String::into_bytes)
+        .flatten_ok()
+        .collect::<io::Result<_>>()?;
+    let bytes = base64_decode(base64)?;
+
+    let cipher = Cipher::aes_128_ecb();
+    let decoded = decrypt(cipher, key, None, &bytes)?;
+
+    let answer = String::from_utf8(decoded)?;
+    eprintln!("{answer}");
+
+    assert_eq!(count_occurances(&answer, "funky"), 8);
+    Ok(())
+}
+
+/// Count non-overlapping occurances of `word` in `s`.
+fn count_occurances(mut s: &str, word: &str) -> usize {
+    if word.is_empty() {
+        return 0;
+    }
+
+    let mut count = 0;
+    while let Some(i) = s.find(word) {
+        count += 1;
+        s = &s[i + word.len()..];
+    }
+    count
 }
