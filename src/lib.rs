@@ -5,7 +5,7 @@ use std::{
     fs::File,
     io::{self, prelude::*, BufReader},
     iter::zip,
-    path::PathBuf,
+    path::{Path, PathBuf},
     rc::Rc,
     str,
 };
@@ -13,7 +13,7 @@ use std::{
 use anyhow::{Context, Result};
 use base64::prelude::*;
 use itertools::Itertools;
-use openssl::symm::{decrypt, Cipher};
+use openssl::symm::{self, Cipher};
 
 #[test]
 fn problem_1_1() -> Result<()> {
@@ -173,11 +173,8 @@ fn ok<T, E>(err: &mut &mut Result<(), E>, item: Result<T, E>) -> Option<T> {
 
 #[test]
 fn problem_1_5() {
-    let input = b"Burning 'em, if you ain't quick and nimble\n\
-        I go crazy when I hear a cymbal";
+    let input = b"Burning 'em, if you ain't quick and nimble\nI go crazy when I hear a cymbal";
     let key = b"ICE";
-
-    dbg!(input, key);
 
     let encoded = xor_with_key(input, key);
     let expected_hex = "0b3637272a2b2e63622c2e69692a23693a2a3c6324202d623d63343c2a26226324272765272a282b2f20430a652e2c652a3124333a653e2b2027630c692b20283165286326302e27282f";
@@ -187,66 +184,86 @@ fn problem_1_5() {
 #[test]
 fn problem_1_6() -> Result<()> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("inputs/1-6");
+    let input = decode_base64_file(path)?;
+
+    let key_len = best_key_len(&input);
+    let columns = transpose(&input, key_len);
+    let key: Vec<u8> = columns.into_iter().map(|col| best_key(&col)).collect();
+
+    let decoded = xor_with_key(&input, &key);
+    let text = str::from_utf8(&decoded)?;
+    assert_eq!(count_occurances(text, "funky"), 8);
+
+    eprintln!("key: {:?}", str::from_utf8(&key)?);
+    eprintln!();
+    eprintln!("{text}");
+
+    Ok(())
+}
+
+/// Ignores newlines.
+fn decode_base64_file(path: impl AsRef<Path>) -> Result<Vec<u8>> {
     let file = File::open(path)?;
-    let base64: Vec<_> = BufReader::new(file)
+
+    let base64: Vec<u8> = BufReader::new(file)
         .lines()
+        // We'd rather map `String::chars`, but that causes lifetime issues.
         .map_ok(String::into_bytes)
         .flatten_ok()
         .collect::<io::Result<_>>()?;
-    let bytes = base64_decode(base64)?;
 
-    let key_len = best_key_len(&bytes);
-    dbg!(key_len);
-
-    let cols = transpose(&bytes, key_len);
-
-    let key_bytes: Vec<u8> = cols.into_iter().map(|col| best_key(&col)).collect();
-
-    // dbg!(&key_bytes, String::from_utf8(&key_bytes));
-
-    let decoded = xor_with_key(&bytes, &key_bytes);
-    let text = String::from_utf8(decoded);
-    dbg!(text)?;
-
-    Ok(())
+    base64_decode(base64)
 }
 
 fn best_key_len(bytes: &[u8]) -> usize {
     let (key_len, _score) = (2..=40)
         .map(|n| {
-            let chunk_count = 4;
-            let num_combinations = chunk_count * (chunk_count - 1) / 2;
+            let num_blocks = 4;
+            let num_pairs = num_blocks * (num_blocks - 1) / 2;
+
             let avg_dist = bytes
                 .chunks(n)
-                .take(chunk_count)
+                .take(num_blocks)
                 .tuple_combinations()
                 .map(|(chunk1, chunk2)| normalized_hamming_distance(chunk1, chunk2))
                 .sum::<f64>()
-                / num_combinations as f64;
+                / num_pairs as f64;
 
             (n, avg_dist)
         })
         .min_by(|(_, score1), (_, score2)| f64::total_cmp(score1, score2))
         .unwrap();
+
     key_len
+}
+
+fn normalized_hamming_distance(s: &[u8], t: &[u8]) -> f64 {
+    assert_eq!(s.len(), t.len());
+    hamming_distance(s, t) as f64 / s.len() as f64
+}
+
+fn hamming_distance(s: &[u8], t: &[u8]) -> usize {
+    assert_eq!(s.len(), t.len());
+    zip(s, t).map(|(x, y)| (x ^ y).count_ones() as usize).sum()
 }
 
 #[test]
 fn test_hamming() {
     let s = b"this is a test";
     let t = b"wokka wokka!!!";
-    let n = s.len();
-
-    let d = normalized_hamming_distance(s, t) * n as f64;
-    assert_eq!(d.round() as usize, 37);
+    assert_eq!(hamming_distance(s, t), 37);
 }
 
-fn normalized_hamming_distance(s: &[u8], t: &[u8]) -> f64 {
-    assert_eq!(s.len(), t.len());
-    let n = s.len();
+fn transpose(bytes: &[u8], row_len: usize) -> Vec<Vec<u8>> {
+    let mut cols = vec![vec![]; row_len];
 
-    let d: usize = zip(s, t).map(|(x, y)| (x ^ y).count_ones() as usize).sum();
-    d as f64 / n as f64
+    for row in bytes.chunks(row_len) {
+        for (col, &x) in zip(&mut cols, row) {
+            col.push(x);
+        }
+    }
+
+    cols
 }
 
 #[test]
@@ -255,44 +272,10 @@ fn test_transpose() {
     let cols = transpose(&bytes, 7);
 
     for (i, col) in cols.into_iter().enumerate() {
-        assert!(col.into_iter().all(|x| x % 7 == i as u8));
+        for x in col {
+            assert_eq!(x % 7, i as u8);
+        }
     }
-}
-
-fn transpose(bytes: &[u8], row_len: usize) -> Vec<Vec<u8>> {
-    let num_cols = row_len;
-
-    bytes
-        .chunks(row_len)
-        .fold(vec![vec![]; num_cols], |mut cols, row| {
-            for (col, &x) in zip(&mut cols, row) {
-                col.push(x);
-            }
-            cols
-        })
-}
-
-#[test]
-fn problem_1_7() -> Result<()> {
-    let key = b"YELLOW SUBMARINE";
-
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("inputs/1-7");
-    let file = File::open(path)?;
-    let base64: Vec<_> = BufReader::new(file)
-        .lines()
-        .map_ok(String::into_bytes)
-        .flatten_ok()
-        .collect::<io::Result<_>>()?;
-    let bytes = base64_decode(base64)?;
-
-    let cipher = Cipher::aes_128_ecb();
-    let decoded = decrypt(cipher, key, None, &bytes)?;
-
-    let answer = String::from_utf8(decoded)?;
-    eprintln!("{answer}");
-
-    assert_eq!(count_occurances(&answer, "funky"), 8);
-    Ok(())
 }
 
 /// Count non-overlapping occurances of `word` in `s`.
@@ -310,6 +293,23 @@ fn count_occurances(mut s: &str, word: &str) -> usize {
 }
 
 #[test]
+fn problem_1_7() -> Result<()> {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("inputs/1-7");
+    let input = decode_base64_file(path)?;
+
+    let cipher = Cipher::aes_128_ecb();
+    let key = b"YELLOW SUBMARINE";
+    let decoded = symm::decrypt(cipher, key, None, &input)?;
+
+    let text = str::from_utf8(&decoded)?;
+    assert_eq!(count_occurances(text, "funky"), 8);
+
+    eprintln!("{text}");
+
+    Ok(())
+}
+
+#[test]
 fn problem_1_8() -> Result<()> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("inputs/1-8");
     let file = File::open(path)?;
@@ -324,7 +324,7 @@ fn problem_1_8() -> Result<()> {
         // you're looking at hex, or at bytes.
         .filter(|line| detect_aes_ecb(line.as_bytes()))
         .collect_tuple()
-        .context("there should be exactly one suspect")?;
+        .context("there should be exactly one 'suspect'")?;
     err?;
 
     let mut seen = HashMap::new();
