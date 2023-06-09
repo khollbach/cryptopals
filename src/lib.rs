@@ -2,7 +2,7 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    fs::File,
+    fs::{self, File},
     io::{self, prelude::*, BufReader},
     iter::zip,
     path::{Path, PathBuf},
@@ -47,7 +47,7 @@ fn challenge_2() -> Result<()> {
 
     let input = hex::decode(input_hex)?;
     let key = hex::decode(key_hex)?;
-    let answer = xor_with_key(&input, &key);
+    let answer = xor_with(&input, &key);
     assert_eq!(hex::encode(&answer), expected_hex);
 
     eprintln!("{}", str::from_utf8(&key)?);
@@ -56,7 +56,7 @@ fn challenge_2() -> Result<()> {
     Ok(())
 }
 
-fn xor_with_key(bytes: &[u8], key: &[u8]) -> Vec<u8> {
+fn xor_with(bytes: &[u8], key: &[u8]) -> Vec<u8> {
     let key_repeated = key.iter().cycle();
     zip(bytes, key_repeated).map(|(x, y)| x ^ y).collect()
 }
@@ -67,7 +67,7 @@ fn challenge_3() -> Result<()> {
 
     let input = hex::decode(input_hex)?;
     let key = best_key(&input);
-    let decoded = xor_with_key(&input, &[key]);
+    let decoded = xor_with(&input, &[key]);
     let text = str::from_utf8(&decoded)?;
     assert!(text.contains("bacon"));
 
@@ -89,7 +89,7 @@ fn best_key(encoded_bytes: &[u8]) -> u8 {
 
 /// Helper function for `best_key`.
 fn key_score(encoded_bytes: &[u8], key: u8) -> u32 {
-    let maybe_text = xor_with_key(&encoded_bytes, &[key]);
+    let maybe_text = xor_with(&encoded_bytes, &[key]);
     text_score(&maybe_text)
 }
 
@@ -150,7 +150,7 @@ fn challenge_4() -> Result<()> {
         .context("file must be non-empty")?;
     err?;
 
-    let decoded = xor_with_key(&encoded_bytes, &[key]);
+    let decoded = xor_with(&encoded_bytes, &[key]);
     let text = str::from_utf8(&decoded)?;
     assert!(text.contains("party"));
 
@@ -177,7 +177,7 @@ fn challenge_5() {
     let input = b"Burning 'em, if you ain't quick and nimble\nI go crazy when I hear a cymbal";
     let key = b"ICE";
 
-    let encoded = xor_with_key(input, key);
+    let encoded = xor_with(input, key);
     let expected_hex = "0b3637272a2b2e63622c2e69692a23693a2a3c6324202d623d63343c2a26226324272765272a282b2f20430a652e2c652a3124333a653e2b2027630c692b20283165286326302e27282f";
     assert_eq!(hex::encode(encoded), expected_hex);
 }
@@ -191,7 +191,7 @@ fn challenge_6() -> Result<()> {
     let columns = transpose(&input, key_len);
     let key: Vec<u8> = columns.into_iter().map(|col| best_key(&col)).collect();
 
-    let decoded = xor_with_key(&input, &key);
+    let decoded = xor_with(&input, &key);
     let text = str::from_utf8(&decoded)?;
     assert_eq!(count_occurances(text, "funky"), 8);
 
@@ -301,9 +301,11 @@ fn challenge_7() -> Result<()> {
     let cipher = Cipher::aes_128_ecb();
     let key = b"YELLOW SUBMARINE";
     let decoded = symm::decrypt(cipher, key, None, &input)?;
-
     let text = str::from_utf8(&decoded)?;
-    assert_eq!(count_occurances(text, "funky"), 8);
+
+    let expected = concat!(env!("CARGO_MANIFEST_DIR"), "/inputs/1-7-decoded");
+    let expected = fs::read_to_string(expected)?;
+    assert_eq!(expected, text);
 
     eprintln!("{text}");
 
@@ -382,5 +384,52 @@ fn pkcs7_pad(buf: &mut Vec<u8>, n: usize) {
 
 #[test]
 fn challenge_10() {
-    todo!()
+    // let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("inputs/1-7");
+    // let input = decode_base64_file(path)?;
+
+    // let cipher = Cipher::aes_128_ecb();
+    // let key = b"YELLOW SUBMARINE";
+    // let decoded = symm::decrypt(cipher, key, None, &input)?;
+
+    // let text = str::from_utf8(&decoded)?;
+    // assert_eq!(count_occurances(text, "funky"), 8);
+
+    // eprintln!("{text}");
+
+    // Ok(())
+}
+
+fn encrypt(text: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8>> {
+    // Pad, if necessary.
+    let mut text = Vec::from(text);
+    pkcs7_pad(&mut text, 16);
+
+    let mut out = Vec::with_capacity(text.len());
+
+    let mut prev_cipher_block = Vec::from(iv);
+
+    for block in text.chunks(16) {
+        assert_eq!(block.len(), 16); // b/c of padding
+
+        let cipher_block = encrypt_block(block, &prev_cipher_block, key)?;
+
+        out.extend_from_slice(&cipher_block);
+        prev_cipher_block = cipher_block;
+    }
+
+    Ok(out)
+}
+
+fn encrypt_block(
+    block: &[u8],
+    prev_cipher_block: &[u8],
+    key: &[u8],
+    // out: &mut Vec<u8>,
+) -> Result<Vec<u8>> {
+    let salted_block = xor_with(block, prev_cipher_block);
+
+    let cipher = Cipher::aes_128_ecb();
+    let encrypted_block = symm::encrypt(cipher, key, None, &salted_block)?;
+
+    Ok(encrypted_block)
 }
