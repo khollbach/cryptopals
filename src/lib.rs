@@ -383,23 +383,27 @@ fn pkcs7_pad(buf: &mut Vec<u8>, n: usize) {
 }
 
 #[test]
-fn challenge_10() {
-    // let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("inputs/1-7");
-    // let input = decode_base64_file(path)?;
+fn challenge_10() -> Result<()> {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("inputs/2-10");
+    let input = decode_base64_file(path)?;
 
-    // let cipher = Cipher::aes_128_ecb();
-    // let key = b"YELLOW SUBMARINE";
-    // let decoded = symm::decrypt(cipher, key, None, &input)?;
+    let iv = vec![0u8; 16];
+    let key = b"YELLOW SUBMARINE";
+    let decoded = cbc_encrypt_decrypt(&input, key, &iv, Mode::Decrypt)?;
 
-    // let text = str::from_utf8(&decoded)?;
-    // assert_eq!(count_occurances(text, "funky"), 8);
+    let text = str::from_utf8(&decoded)?;
+    eprintln!("{text}");
 
-    // eprintln!("{text}");
-
-    // Ok(())
+    Ok(())
 }
 
-fn encrypt(text: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8>> {
+#[derive(PartialEq, Eq, Clone, Copy)]
+enum Mode {
+    Encrypt,
+    Decrypt,
+}
+
+fn cbc_encrypt_decrypt(text: &[u8], key: &[u8], iv: &[u8], mode: Mode) -> Result<Vec<u8>> {
     // Pad, if necessary.
     let mut text = Vec::from(text);
     pkcs7_pad(&mut text, 16);
@@ -411,7 +415,7 @@ fn encrypt(text: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8>> {
     for block in text.chunks(16) {
         assert_eq!(block.len(), 16); // b/c of padding
 
-        let cipher_block = encrypt_block(block, &prev_cipher_block, key)?;
+        let cipher_block = cbc_block(block, &prev_cipher_block, key, mode)?;
 
         out.extend_from_slice(&cipher_block);
         prev_cipher_block = cipher_block;
@@ -420,16 +424,22 @@ fn encrypt(text: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-fn encrypt_block(
+fn cbc_block(
     block: &[u8],
     prev_cipher_block: &[u8],
     key: &[u8],
+    mode: Mode,
     // out: &mut Vec<u8>,
 ) -> Result<Vec<u8>> {
     let salted_block = xor_with(block, prev_cipher_block);
 
     let cipher = Cipher::aes_128_ecb();
-    let encrypted_block = symm::encrypt(cipher, key, None, &salted_block)?;
+    // let encrypted_block = if mode == Mode::Encrypt {
+    //     symm::encrypt(cipher, key, None, &salted_block)?
+    // } else {
+    //     symm::decrypt(cipher, key, None, &salted_block)?
+    // };
+    let encrypted_block = salted_block;
 
     Ok(encrypted_block)
 }
