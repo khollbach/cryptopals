@@ -384,28 +384,29 @@ fn pkcs7_pad(buf: &mut Vec<u8>, n: usize) {
 
 #[test]
 fn challenge_10() -> Result<()> {
-    // let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("inputs/2-10");
-    // let input = decode_base64_file(path)?;
-
-    // let iv = vec![0u8; 16];
-    // let key = b"YELLOW SUBMARINE";
-    // let decoded = cbc_encrypt_decrypt(&input, key, &iv, Mode::Decrypt)?;
-
-    // let text = str::from_utf8(&decoded)?;
-    // eprintln!("{text}");
-
-
-
-    let input = concat!(env!("CARGO_MANIFEST_DIR"), "/inputs/1-7-decoded");
-    let input = fs::read_to_string(input)?.into_bytes();
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("inputs/2-10");
+    let input = decode_base64_file(path)?;
 
     let iv = vec![0u8; 16];
     let key = b"YELLOW SUBMARINE";
-    let ciphertext = cbc_encrypt_decrypt(&input, key, &iv, Mode::Encrypt)?;
-    dbg!(&ciphertext);
+    let decoded = cbc_decrypt(&input, key, &iv)?;
 
-    let plaintext = cbc_encrypt_decrypt(&ciphertext, key, &iv, Mode::Decrypt)?;
-    dbg!(&plaintext);
+    let text = str::from_utf8(&decoded)?;
+    eprintln!("{text}");
+
+
+
+    // let input = concat!(env!("CARGO_MANIFEST_DIR"), "/inputs/1-7-decoded");
+    // let input = fs::read_to_string(input)?.into_bytes();
+    // println!("Input len: {}", input.len() % 16);
+
+    // let iv = vec![0u8; 16];
+    // let key = b"YELLOW SUBMARINE";
+    // let ciphertext = cbc_encrypt_decrypt(&input, key, &iv, Mode::Encrypt)?;
+    // // dbg!(&ciphertext);
+
+    // let plaintext = cbc_encrypt_decrypt(&ciphertext, key, &iv, Mode::Decrypt)?;
+    // // dbg!(&plaintext);
 
     Ok(())
 }
@@ -414,6 +415,31 @@ fn challenge_10() -> Result<()> {
 enum Mode {
     Encrypt,
     Decrypt,
+}
+
+fn cbc_decrypt(text: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8>> {
+    let mut text = Vec::from(text);
+    pkcs7_pad(&mut text, 16);
+
+    let mut out = Vec::with_capacity(text.len());
+    let mut prev_cipher_block = Vec::from(iv);
+    let cipher = Cipher::aes_128_ecb();
+
+    let mut count = 0u32;
+    for block in text.chunks(16) {
+        println!("Count: {}", count);
+        assert_eq!(block.len(), 16); // b/c of padding
+
+        let decypted_text = symm::decrypt(cipher, key, None, &block)?;
+        let plain_text = xor_with(&decypted_text, &prev_cipher_block);
+
+        out.extend_from_slice(&plain_text);
+        prev_cipher_block = Vec::from(block);
+        count += 1;
+    }
+
+    Ok(out)
+
 }
 
 fn cbc_encrypt_decrypt(text: &[u8], key: &[u8], iv: &[u8], mode: Mode) -> Result<Vec<u8>> {
@@ -425,6 +451,7 @@ fn cbc_encrypt_decrypt(text: &[u8], key: &[u8], iv: &[u8], mode: Mode) -> Result
 
     let mut prev_cipher_block = Vec::from(iv);
 
+    let mut count = 0u32;
     for block in text.chunks(16) {
         assert_eq!(block.len(), 16); // b/c of padding
 
