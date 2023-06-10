@@ -384,15 +384,28 @@ fn pkcs7_pad(buf: &mut Vec<u8>, n: usize) {
 
 #[test]
 fn challenge_10() -> Result<()> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("inputs/2-10");
-    let input = decode_base64_file(path)?;
+    // let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("inputs/2-10");
+    // let input = decode_base64_file(path)?;
+
+    // let iv = vec![0u8; 16];
+    // let key = b"YELLOW SUBMARINE";
+    // let decoded = cbc_encrypt_decrypt(&input, key, &iv, Mode::Decrypt)?;
+
+    // let text = str::from_utf8(&decoded)?;
+    // eprintln!("{text}");
+
+
+
+    let input = concat!(env!("CARGO_MANIFEST_DIR"), "/inputs/1-7-decoded");
+    let input = fs::read_to_string(input)?.into_bytes();
 
     let iv = vec![0u8; 16];
     let key = b"YELLOW SUBMARINE";
-    let decoded = cbc_encrypt_decrypt(&input, key, &iv, Mode::Decrypt)?;
+    let ciphertext = cbc_encrypt_decrypt(&input, key, &iv, Mode::Encrypt)?;
+    dbg!(&ciphertext);
 
-    let text = str::from_utf8(&decoded)?;
-    eprintln!("{text}");
+    let plaintext = cbc_encrypt_decrypt(&ciphertext, key, &iv, Mode::Decrypt)?;
+    dbg!(&plaintext);
 
     Ok(())
 }
@@ -431,15 +444,24 @@ fn cbc_block(
     mode: Mode,
     // out: &mut Vec<u8>,
 ) -> Result<Vec<u8>> {
-    let salted_block = xor_with(block, prev_cipher_block);
+    let salted_block = if mode == Mode::Encrypt {
+        xor_with(block, prev_cipher_block)
+    } else {
+        Vec::from(block)
+    };
 
     let cipher = Cipher::aes_128_ecb();
-    // let encrypted_block = if mode == Mode::Encrypt {
-    //     symm::encrypt(cipher, key, None, &salted_block)?
-    // } else {
-    //     symm::decrypt(cipher, key, None, &salted_block)?
-    // };
-    let encrypted_block = salted_block;
+    let crypted_block = if mode == Mode::Encrypt {
+        symm::encrypt(cipher, key, None, &salted_block)?
+    } else {
+        symm::decrypt(cipher, key, None, &salted_block)?
+    };
 
-    Ok(encrypted_block)
+    let unsalted_block = if mode == Mode::Encrypt {
+        Vec::from(block)
+    } else {
+        xor_with(&crypted_block, prev_cipher_block)
+    };
+
+    Ok(unsalted_block)
 }
