@@ -13,7 +13,7 @@ use std::{
 use anyhow::{Context, Result};
 use base64::prelude::*;
 use itertools::Itertools;
-use openssl::symm::{self, Cipher};
+use openssl::symm::{self, Cipher, Crypter};
 use test_case::test_case;
 
 #[test]
@@ -424,22 +424,24 @@ fn cbc_decrypt(text: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8>> {
     let mut out = Vec::with_capacity(text.len());
     let mut prev_cipher_block = Vec::from(iv);
     let cipher = Cipher::aes_128_ecb();
+    let cipher_len = Cipher::aes_256_ecb().block_size();
+    let mut decryptor = Crypter::new(cipher, symm::Mode::Decrypt, key, None)?;
 
-    let mut count = 0u32;
     for block in text.chunks(16) {
-        println!("Count: {}", count);
         assert_eq!(block.len(), 16); // b/c of padding
 
-        let decypted_text = symm::decrypt(cipher, key, None, &block)?;
-        let plain_text = xor_with(&decypted_text, &prev_cipher_block);
+        let mut decrypted_text = vec![0; block.len() + cipher_len];
+        let decrypted_result = decryptor.update(&block, &mut decrypted_text)?;
+        //let decypted_text = symm::decrypt(cipher, key, None, &block)?;
+
+        println!("I can decrypt");
+        let plain_text = xor_with(&decrypted_text, &prev_cipher_block);
 
         out.extend_from_slice(&plain_text);
         prev_cipher_block = Vec::from(block);
-        count += 1;
     }
 
     Ok(out)
-
 }
 
 fn cbc_encrypt_decrypt(text: &[u8], key: &[u8], iv: &[u8], mode: Mode) -> Result<Vec<u8>> {
