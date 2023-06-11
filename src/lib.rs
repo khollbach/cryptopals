@@ -358,11 +358,11 @@ fn detect_aes_ecb(bytes: &[u8]) -> bool {
 #[test_case(b"YELLOW SUBMARINE", 10, b"YELLOW SUBMARINE\x04\x04\x04\x04")]
 #[test_case(b"YELLOW SUBMARINE", 5, b"YELLOW SUBMARINE\x04\x04\x04\x04")]
 #[test_case(b"YELLOW SUBMARINE", 3, b"YELLOW SUBMARINE\x02\x02")]
-#[test_case(b"YELLOW SUBMARINE", 16, b"YELLOW SUBMARINE")]
-#[test_case(b"YELLOW SUBMARINE", 1, b"YELLOW SUBMARINE")]
 #[test_case(b"SUBMARINE", 2, b"SUBMARINE\x01")]
-#[test_case(b"", 5, b"")]
-#[test_case(b"", 1, b"")]
+#[test_case(b"YELLOW SUBMARINE", 16, b"YELLOW SUBMARINE\x10\x10\x10\x10\x10\x10\x10\x10\x10\x10\x10\x10\x10\x10\x10\x10")]
+#[test_case(b"YELLOW SUBMARINE", 1, b"YELLOW SUBMARINE\x01")]
+#[test_case(b"", 5, b"\x05\x05\x05\x05\x05")]
+#[test_case(b"", 1, b"\x01")]
 fn challenge_9(input: &[u8], n: usize, expected: &[u8]) {
     let mut buf = Vec::from(input);
     pkcs7_pad(&mut buf, n);
@@ -370,12 +370,16 @@ fn challenge_9(input: &[u8], n: usize, expected: &[u8]) {
 }
 
 /// Pad `buf` so that its length is a multiple of `n`.
+/// 
+/// If it's length is already divisible by `n`, pad a whole block.
 fn pkcs7_pad(buf: &mut Vec<u8>, n: usize) {
     assert_ne!(n, 0);
     assert!(n < 256);
 
+    // Note the edge-case: if overflow is 0, padding is `n`.
     let overflow = buf.len() % n;
-    let padding = if overflow != 0 { n - overflow } else { 0 };
+    let padding = n - overflow;
+
     let new_len = buf.len() + padding;
     debug_assert_eq!(new_len % n, 0);
 
@@ -394,20 +398,6 @@ fn challenge_10() -> Result<()> {
     let text = str::from_utf8(&decoded)?;
     eprintln!("{text}");
 
-
-
-    // let input = concat!(env!("CARGO_MANIFEST_DIR"), "/inputs/1-7-decoded");
-    // let input = fs::read_to_string(input)?.into_bytes();
-    // println!("Input len: {}", input.len() % 16);
-
-    // let iv = vec![0u8; 16];
-    // let key = b"YELLOW SUBMARINE";
-    // let ciphertext = cbc_encrypt_decrypt(&input, key, &iv, Mode::Encrypt)?;
-    // // dbg!(&ciphertext);
-
-    // let plaintext = cbc_encrypt_decrypt(&ciphertext, key, &iv, Mode::Decrypt)?;
-    // // dbg!(&plaintext);
-
     Ok(())
 }
 
@@ -418,23 +408,28 @@ enum Mode {
 }
 
 fn cbc_decrypt(text: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8>> {
-    let mut text = Vec::from(text);
-    pkcs7_pad(&mut text, 16);
+    assert_eq!(text.len() % 16, 0);
 
     let mut out = Vec::with_capacity(text.len());
     let mut prev_cipher_block = Vec::from(iv);
+
     let cipher = Cipher::aes_128_ecb();
-    let cipher_len = Cipher::aes_256_ecb().block_size();
-    let mut decryptor = Crypter::new(cipher, symm::Mode::Decrypt, key, None)?;
+    let cipher_len = dbg!(cipher.block_size());
 
     for block in text.chunks(16) {
-        assert_eq!(block.len(), 16); // b/c of padding
+        assert_eq!(block.len(), 16);
+
+        let mut decryptor = Crypter::new(cipher, symm::Mode::Decrypt, key, None)?;
+        decryptor.pad(false); // !!!!!!!!!
 
         let mut decrypted_text = vec![0; block.len() + cipher_len];
-        let decrypted_result = decryptor.update(&block, &mut decrypted_text)?;
-        //let decypted_text = symm::decrypt(cipher, key, None, &block)?;
 
-        println!("I can decrypt");
+        let mut bytes_written = decryptor.update(&block, &mut decrypted_text)?;
+        bytes_written += decryptor.finalize(&mut decrypted_text)?;
+
+        assert_eq!(bytes_written, 16);
+        decrypted_text.truncate(bytes_written);
+
         let plain_text = xor_with(&decrypted_text, &prev_cipher_block);
 
         out.extend_from_slice(&plain_text);
@@ -445,9 +440,12 @@ fn cbc_decrypt(text: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8>> {
 }
 
 fn cbc_encrypt_decrypt(text: &[u8], key: &[u8], iv: &[u8], mode: Mode) -> Result<Vec<u8>> {
-    // Pad, if necessary.
     let mut text = Vec::from(text);
-    pkcs7_pad(&mut text, 16);
+
+    // Pad inputs.
+    if mode == Mode::Encrypt {
+        pkcs7_pad(&mut text, 16);
+    }
 
     let mut out = Vec::with_capacity(text.len());
 
@@ -482,6 +480,19 @@ fn cbc_block(
     let cipher = Cipher::aes_128_ecb();
     let crypted_block = if mode == Mode::Encrypt {
         symm::encrypt(cipher, key, None, &salted_block)?
+
+
+        // TODO(kevan): clean this up, test it against an input of your choice.
+
+        let mut decryptor = Crypter::new(cipher, symm::Mode::Encrypt, key, None)?;
+        decryptor.pad(false); // !!!!!!!!!
+
+        let mut decrypted_text = vec![0; block.len() + cipher_len];
+
+        let mut bytes_written = decryptor.update(&block, &mut decrypted_text)?;
+        bytes_written += decryptor.finalize(&mut decrypted_text)?;
+
+
     } else {
         symm::decrypt(cipher, key, None, &salted_block)?
     };
