@@ -13,7 +13,7 @@ use std::{
 use anyhow::{Context, Result};
 use base64::prelude::*;
 use itertools::Itertools;
-use openssl::symm::{self, Cipher, Crypter};
+use openssl::{symm::{self, Cipher, Crypter}, rand};
 use test_case::test_case;
 
 #[test]
@@ -370,7 +370,7 @@ fn challenge_9(input: &[u8], n: usize, expected: &[u8]) {
 }
 
 /// Pad `buf` so that its length is a multiple of `n`.
-/// 
+///
 /// If it's length is already divisible by `n`, pad a whole block.
 fn pkcs7_pad(buf: &mut Vec<u8>, n: usize) {
     assert_ne!(n, 0);
@@ -398,6 +398,16 @@ fn challenge_10() -> Result<()> {
     let text = str::from_utf8(&decoded)?;
     eprintln!("{text}");
 
+    Ok(())
+}
+
+#[test]
+fn challenge_11() -> Result<()> {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("inputs/1-7-decoded");
+    let text = fs::read_to_string(path)?;
+    let text_bytes = text.as_bytes();
+    let encypted_bytes = encrypt_sphinx(text_bytes)?;
+    encryption_oracle(&encypted_bytes);
     Ok(())
 }
 
@@ -484,13 +494,13 @@ fn cbc_block(
 
         // TODO(kevan): clean this up, test it against an input of your choice.
 
-        let mut decryptor = Crypter::new(cipher, symm::Mode::Encrypt, key, None)?;
-        decryptor.pad(false); // !!!!!!!!!
+        // let mut decryptor = Crypter::new(cipher, symm::Mode::Encrypt, key, None)?;
+        // decryptor.pad(false); // !!!!!!!!!
 
-        let mut decrypted_text = vec![0; block.len() + cipher_len];
+        // let mut decrypted_text = vec![0; block.len() + cipher_len];
 
-        let mut bytes_written = decryptor.update(&block, &mut decrypted_text)?;
-        bytes_written += decryptor.finalize(&mut decrypted_text)?;
+        // let mut bytes_written = decryptor.update(&block, &mut decrypted_text)?;
+        // bytes_written += decryptor.finalize(&mut decrypted_text)?;
 
 
     } else {
@@ -504,4 +514,42 @@ fn cbc_block(
     };
 
     Ok(unsalted_block)
+}
+
+fn random_aes_key() -> Result<[u8; 16]> {
+    let mut key = [0; 16];
+    openssl::rand::rand_bytes(&mut key)?;
+    Ok(key)
+}
+
+fn encryption_oracle(encypted_bytes: &[u8]){
+    if detect_aes_ecb(encypted_bytes) {
+        println!("[Oracle] Is ECB!");
+    } else {
+        println!("[Oracle] Is CBC!");
+    }
+}
+
+fn encrypt_sphinx(bytes: &[u8]) -> Result<Vec<u8>>{
+    let key = random_aes_key()?;
+    let is_ecb = key[0] < 128;
+    let iv = random_aes_key()?;
+
+    let mut encypted_text = bytes.to_vec();
+    // Prepend/append bytes
+    let num_prepend = key[1] % 6;
+    let num_append = key[2] % 6;
+    encypted_text.extend(vec![0;(5 + num_append) as usize]);
+    // Weird way of prepending a vector to another vector
+    encypted_text.splice(0..0, vec![0u8; (5 + num_prepend) as usize]);
+
+    if is_ecb {
+        println!("[Sphinx]: I am encrypting using ecb.");
+        encypted_text = symm::encrypt(Cipher::aes_128_ecb(), &key, None, &encypted_text)?;
+    } else {
+        println!("[Sphinx]: now using cbc.");
+        encypted_text = symm::encrypt(Cipher::aes_128_cbc(), &key, Some(&iv), &encypted_text)?;
+    }
+
+    Ok(encypted_text)
 }
