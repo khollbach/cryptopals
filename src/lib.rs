@@ -406,7 +406,7 @@ fn challenge_11() -> Result<()> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("inputs/1-7-decoded");
     let text = fs::read_to_string(path)?;
     let text_bytes = text.as_bytes();
-    let encypted_bytes = encrypt_sphinx(text_bytes)?;
+    let encypted_bytes = encryption_sphinx(text_bytes)?;
     encryption_oracle(&encypted_bytes);
     Ok(())
 }
@@ -530,7 +530,7 @@ fn encryption_oracle(encypted_bytes: &[u8]){
     }
 }
 
-fn encrypt_sphinx(bytes: &[u8]) -> Result<Vec<u8>>{
+fn encryption_sphinx(bytes: &[u8]) -> Result<Vec<u8>>{
     let key = random_aes_key()?;
     let is_ecb = key[0] < 128;
     let iv = random_aes_key()?;
