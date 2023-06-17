@@ -13,7 +13,7 @@ use std::{
 use anyhow::{Context, Result};
 use base64::prelude::*;
 use itertools::Itertools;
-use openssl::{symm::{self, Cipher, Crypter}, rand};
+use openssl::symm::{self, Cipher, Crypter};
 use test_case::test_case;
 
 #[test]
@@ -359,7 +359,11 @@ fn detect_aes_ecb(bytes: &[u8]) -> bool {
 #[test_case(b"YELLOW SUBMARINE", 5, b"YELLOW SUBMARINE\x04\x04\x04\x04")]
 #[test_case(b"YELLOW SUBMARINE", 3, b"YELLOW SUBMARINE\x02\x02")]
 #[test_case(b"SUBMARINE", 2, b"SUBMARINE\x01")]
-#[test_case(b"YELLOW SUBMARINE", 16, b"YELLOW SUBMARINE\x10\x10\x10\x10\x10\x10\x10\x10\x10\x10\x10\x10\x10\x10\x10\x10")]
+#[test_case(
+    b"YELLOW SUBMARINE",
+    16,
+    b"YELLOW SUBMARINE\x10\x10\x10\x10\x10\x10\x10\x10\x10\x10\x10\x10\x10\x10\x10\x10"
+)]
 #[test_case(b"YELLOW SUBMARINE", 1, b"YELLOW SUBMARINE\x01")]
 #[test_case(b"", 5, b"\x05\x05\x05\x05\x05")]
 #[test_case(b"", 1, b"\x01")]
@@ -412,6 +416,7 @@ fn challenge_11() -> Result<()> {
 }
 
 #[derive(PartialEq, Eq, Clone, Copy)]
+#[allow(unused)]
 enum Mode {
     Encrypt,
     Decrypt,
@@ -449,6 +454,7 @@ fn cbc_decrypt(text: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8>> {
     Ok(out)
 }
 
+#[allow(unused)]
 fn cbc_encrypt_decrypt(text: &[u8], key: &[u8], iv: &[u8], mode: Mode) -> Result<Vec<u8>> {
     let mut text = Vec::from(text);
 
@@ -461,7 +467,6 @@ fn cbc_encrypt_decrypt(text: &[u8], key: &[u8], iv: &[u8], mode: Mode) -> Result
 
     let mut prev_cipher_block = Vec::from(iv);
 
-    let mut count = 0u32;
     for block in text.chunks(16) {
         assert_eq!(block.len(), 16); // b/c of padding
 
@@ -491,7 +496,6 @@ fn cbc_block(
     let crypted_block = if mode == Mode::Encrypt {
         symm::encrypt(cipher, key, None, &salted_block)?
 
-
         // TODO(kevan): clean this up, test it against an input of your choice.
 
         // let mut decryptor = Crypter::new(cipher, symm::Mode::Encrypt, key, None)?;
@@ -501,8 +505,6 @@ fn cbc_block(
 
         // let mut bytes_written = decryptor.update(&block, &mut decrypted_text)?;
         // bytes_written += decryptor.finalize(&mut decrypted_text)?;
-
-
     } else {
         symm::decrypt(cipher, key, None, &salted_block)?
     };
@@ -522,7 +524,7 @@ fn random_aes_key() -> Result<[u8; 16]> {
     Ok(key)
 }
 
-fn encryption_oracle(encypted_bytes: &[u8]){
+fn encryption_oracle(encypted_bytes: &[u8]) {
     if detect_aes_ecb(encypted_bytes) {
         println!("[Oracle] Is ECB!");
     } else {
@@ -530,7 +532,7 @@ fn encryption_oracle(encypted_bytes: &[u8]){
     }
 }
 
-fn encryption_sphinx(bytes: &[u8]) -> Result<Vec<u8>>{
+fn encryption_sphinx(bytes: &[u8]) -> Result<Vec<u8>> {
     let key = random_aes_key()?;
     let is_ecb = key[0] < 128;
     let iv = random_aes_key()?;
@@ -539,7 +541,7 @@ fn encryption_sphinx(bytes: &[u8]) -> Result<Vec<u8>>{
     // Prepend/append bytes
     let num_prepend = key[1] % 6;
     let num_append = key[2] % 6;
-    encypted_text.extend(vec![0;(5 + num_append) as usize]);
+    encypted_text.extend(vec![0; (5 + num_append) as usize]);
     // Weird way of prepending a vector to another vector
     encypted_text.splice(0..0, vec![0u8; (5 + num_prepend) as usize]);
 
@@ -553,3 +555,49 @@ fn encryption_sphinx(bytes: &[u8]) -> Result<Vec<u8>>{
 
     Ok(encypted_text)
 }
+
+#[test]
+fn challenge_12() -> Result<()> {
+    let secret_b64 = "Um9sbGluJyBpbiBteSA1LjAKV2l0aCBteSByYWctdG9wIGRvd24gc28gbXkgaGFpciBjYW4gYmxvdwpUaGUgZ2lybGllcyBvbiBzdGFuZGJ5IHdhdmluZyBqdXN0IHRvIHNheSBoaQpEaWQgeW91IHN0b3A/IE5vLCBJIGp1c3QgZHJvdmUgYnkK";
+    let secret_message = base64_decode(secret_b64)?;
+    let sphinx = Sphinx::new(secret_message)?;
+
+    // find the block size (todo)
+    let block_size = 16;
+
+    // Verify ECB mode.
+    let identical_blocks = vec![0; block_size * 2];
+    let cipher_text = sphinx.encrypt(&identical_blocks)?;
+    assert_eq!(&cipher_text[..block_size], &cipher_text[block_size..block_size * 2]);
+
+    Ok(())
+}
+
+struct Sphinx {
+    key: Vec<u8>,
+    plaintext_suffix: Vec<u8>,
+}
+
+impl Sphinx {
+    fn new(plaintext_suffix: Vec<u8>) -> Result<Self> {
+        let key = random_aes_key()?.to_vec();
+        Ok(Self {
+            key,
+            plaintext_suffix,
+        })
+    }
+
+    fn encrypt(&self, plaintext_prefix: &[u8]) -> Result<Vec<u8>> {
+        let mut plaintext = vec![];
+        plaintext.extend_from_slice(plaintext_prefix);
+        plaintext.extend_from_slice(&self.plaintext_suffix);
+
+        Ok(symm::encrypt(Cipher::aes_128_ecb(), &self.key, None, &plaintext)?)
+    }
+}
+
+// sphinx(user-input) -> ciphertext
+// * has a secret key & secret plaintext suffix that are chosen ONCE.
+
+// decryption loop
+// * asks a bunch of Qs of the sphinx
