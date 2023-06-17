@@ -568,8 +568,15 @@ fn challenge_12() -> Result<()> {
     // Verify ECB mode.
     let identical_blocks = vec![0; block_size * 2];
     let cipher_text = sphinx.encrypt(&identical_blocks)?;
-    assert_eq!(&cipher_text[..block_size], &cipher_text[block_size..block_size * 2]);
+    assert_eq!(
+        &cipher_text[..block_size],
+        &cipher_text[block_size..block_size * 2]
+    );
 
+    // Test Decode
+    let decoded = decrypt_suffix_sphinx(sphinx, block_size);
+    let text = str::from_utf8(&decoded)?;
+    println!("Challenge 12: {}", text);
     Ok(())
 }
 
@@ -592,8 +599,57 @@ impl Sphinx {
         plaintext.extend_from_slice(plaintext_prefix);
         plaintext.extend_from_slice(&self.plaintext_suffix);
 
-        Ok(symm::encrypt(Cipher::aes_128_ecb(), &self.key, None, &plaintext)?)
+        Ok(symm::encrypt(
+            Cipher::aes_128_ecb(),
+            &self.key,
+            None,
+            &plaintext,
+        )?)
     }
+}
+
+fn secret_sphinx_suffix_len(sphinx: &Sphinx, block_size: usize) -> usize {
+    let init_len = sphinx.encrypt(&[]).unwrap().len();
+    for i in 1..block_size {
+        let new_len = sphinx.encrypt(&vec![0u8; i]).unwrap().len();
+        if new_len != init_len {
+            return new_len - block_size - i;
+        }
+    }
+    unreachable!()
+}
+
+fn decrypt_suffix_sphinx(sphinx: Sphinx, block_size: usize) -> Vec<u8> {
+    let suffix_len = secret_sphinx_suffix_len(&sphinx, block_size);
+    //println!("--> Length of encrypted text: {}", suffix_len);
+    let mut suffix = vec![0; suffix_len];
+
+    for i in 0..suffix_len {
+        let pad_len = block_size - (i % block_size) - 1;
+        let block_index = i / block_size;
+        let base = block_index * block_size;
+
+        let padding = vec![0u8; pad_len];
+        let expected_cipher = sphinx.encrypt(&padding).unwrap();
+        let expected_cipher_block = expected_cipher[base..][..block_size].to_vec();
+
+        let mut prefix_pad = vec![0u8; pad_len];
+        let mut cipher_to_byte = HashMap::new();
+        for j in 0..=u8::MAX {
+            prefix_pad.extend_from_slice(&suffix[..i]);
+            prefix_pad.push(j);
+
+            let cipher = sphinx.encrypt(&prefix_pad).unwrap();
+            let cipher_block = cipher[base..][..block_size].to_vec();
+            cipher_to_byte.insert(cipher_block, j);
+
+            prefix_pad.truncate(pad_len);
+        }
+        assert!(cipher_to_byte.contains_key(&expected_cipher_block));
+        suffix[i] = cipher_to_byte[&expected_cipher_block];
+    }
+
+    suffix
 }
 
 // sphinx(user-input) -> ciphertext
