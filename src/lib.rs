@@ -8,11 +8,13 @@ use std::{
     path::{Path, PathBuf},
     rc::Rc,
     str,
+    sync::Mutex,
 };
 
 use anyhow::{Context, Result};
 use base64::prelude::*;
 use itertools::Itertools;
+use lazy_static::lazy_static;
 use openssl::symm::{self, Cipher, Crypter};
 use test_case::test_case;
 
@@ -560,7 +562,7 @@ fn encryption_sphinx(bytes: &[u8]) -> Result<Vec<u8>> {
 fn challenge_12() -> Result<()> {
     let secret_b64 = "Um9sbGluJyBpbiBteSA1LjAKV2l0aCBteSByYWctdG9wIGRvd24gc28gbXkgaGFpciBjYW4gYmxvdwpUaGUgZ2lybGllcyBvbiBzdGFuZGJ5IHdhdmluZyBqdXN0IHRvIHNheSBoaQpEaWQgeW91IHN0b3A/IE5vLCBJIGp1c3QgZHJvdmUgYnkK";
     let secret_message = base64_decode(secret_b64)?;
-    let sphinx = Sphinx::new(secret_message)?;
+    let sphinx = SuffixSphinx::new(secret_message)?;
 
     // find the block size (todo)
     let block_size = 16;
@@ -580,12 +582,12 @@ fn challenge_12() -> Result<()> {
     Ok(())
 }
 
-struct Sphinx {
+struct SuffixSphinx {
     key: Vec<u8>,
     plaintext_suffix: Vec<u8>,
 }
 
-impl Sphinx {
+impl SuffixSphinx {
     fn new(plaintext_suffix: Vec<u8>) -> Result<Self> {
         let key = random_aes_key()?.to_vec();
         Ok(Self {
@@ -608,7 +610,7 @@ impl Sphinx {
     }
 }
 
-fn secret_sphinx_suffix_len(sphinx: &Sphinx, block_size: usize) -> usize {
+fn secret_sphinx_suffix_len(sphinx: &SuffixSphinx, block_size: usize) -> usize {
     let init_len = sphinx.encrypt(&[]).unwrap().len();
     for i in 1..block_size {
         let new_len = sphinx.encrypt(&vec![0u8; i]).unwrap().len();
@@ -619,7 +621,7 @@ fn secret_sphinx_suffix_len(sphinx: &Sphinx, block_size: usize) -> usize {
     unreachable!()
 }
 
-fn decrypt_suffix_sphinx(sphinx: Sphinx, block_size: usize) -> Vec<u8> {
+fn decrypt_suffix_sphinx(sphinx: SuffixSphinx, block_size: usize) -> Vec<u8> {
     let suffix_len = secret_sphinx_suffix_len(&sphinx, block_size);
     //println!("--> Length of encrypted text: {}", suffix_len);
     let mut suffix = vec![0; suffix_len];
@@ -652,8 +654,85 @@ fn decrypt_suffix_sphinx(sphinx: Sphinx, block_size: usize) -> Vec<u8> {
     suffix
 }
 
-// sphinx(user-input) -> ciphertext
-// * has a secret key & secret plaintext suffix that are chosen ONCE.
+/*
 
-// decryption loop
-// * asks a bunch of Qs of the sphinx
+[x] Sphinx
+
+[ ] GOAL: create a ciphertext which decrypts to a user-object w/ role=admin
+
+allowed to ask the sphinx any # of Qs, with any usernames
+* (but not "&" or "=")
+* OR MAYBE we accept & and =, but escape them when parsing
+    (and maybe this matters? so that the sphinx accepts arbitrary bytes... we'll see)
+
+*/
+
+#[test]
+fn challenge_13() {
+    let emails = ["bob", "joe", "jane", "annie"];
+    for email in emails {
+        dbg!(str::from_utf8(&profile_for(email.as_bytes())).unwrap());
+    }
+}
+
+struct ProfileSphinx {
+    key: Vec<u8>,
+}
+
+impl ProfileSphinx {
+    fn new() -> Result<Self> {
+        Ok(Self {
+            key: random_aes_key()?.to_vec(),
+        })
+    }
+
+    fn generate_encrypted_profile(&self, email: &[u8]) -> Result<Vec<u8>> {
+        let serialized_user_object = profile_for(email);
+
+        Ok(symm::encrypt(
+            Cipher::aes_128_ecb(),
+            &self.key,
+            None,
+            &serialized_user_object,
+        )?)
+    }
+}
+
+fn profile_for(email: &[u8]) -> Vec<u8> {
+    let user = User::new(email);
+    user.serialize()
+}
+
+#[derive(Debug)]
+struct User {
+    email: Vec<u8>,
+    uid: u32,
+    role: Vec<u8>,
+}
+
+impl User {
+    fn new(email: &[u8]) -> Self {
+        // Global incrementing sequence number.
+        lazy_static! {
+            static ref UID: Mutex<u32> = Default::default();
+        }
+        *UID.lock().unwrap() += 1;
+
+        Self {
+            email: email.to_vec(),
+            uid: *UID.lock().unwrap(),
+            role: b"user".to_vec(),
+        }
+    }
+
+    // TODO: escape special chars '=' and '&' !!!
+    fn serialize(&self) -> Vec<u8> {
+        let mut out = vec![];
+        write!(out, "email=").unwrap();
+        out.extend_from_slice(&self.email);
+        write!(out, "&uid={}", self.uid).unwrap();
+        write!(out, "&role=").unwrap();
+        out.extend_from_slice(&self.role);
+        out
+    }
+}
