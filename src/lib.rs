@@ -17,6 +17,7 @@ use itertools::Itertools;
 use lazy_static::lazy_static;
 use openssl::symm::{self, Cipher, Crypter};
 use test_case::test_case;
+use regex::bytes::Regex;
 
 #[test]
 fn challenge_1() -> Result<()> {
@@ -686,8 +687,8 @@ impl ProfileSphinx {
         })
     }
 
-    fn generate_encrypted_profile(&self, email: &[u8]) -> Result<Vec<u8>> {
-        let serialized_user_object = profile_for(email);
+    fn profile_for(&self, email: &[u8]) -> Result<Vec<u8>> {
+        let serialized_user_object = serialized_profile(email);
 
         Ok(symm::encrypt(
             Cipher::aes_128_ecb(),
@@ -696,9 +697,16 @@ impl ProfileSphinx {
             &serialized_user_object,
         )?)
     }
+
+    fn decrypt_for(&self, cipher_text: &[u8]) -> bool {
+        let re = Regex::new(r"^email=[^&=]*&uid=\d+&role=(user|admin)$").unwrap();
+        let plain_text = symm::decrypt(Cipher::aes_128_ecb(), &self.key, None, &cipher_text).unwrap();
+
+        todo!()
+    }
 }
 
-fn profile_for(email: &[u8]) -> Vec<u8> {
+fn serialized_profile(email: &[u8]) -> Vec<u8> {
     let user = User::new(email);
     user.serialize()
 }
@@ -736,3 +744,14 @@ impl User {
         out
     }
 }
+
+fn generate_admin_cipher_text(sphinx: &ProfileSphinx) -> Vec<u8> {
+    todo!()
+}
+
+// Normal:
+// email=foo@bar.com&uid=10&role=user
+// Mine:
+// email=(0-0\&uid\=10\&role\=admin)|&uid=1&role=user
+// user: 0-0
+// cypher_text: email=0-0\&uid\=10\&role\=admin
