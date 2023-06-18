@@ -672,7 +672,7 @@ allowed to ask the sphinx any # of Qs, with any usernames
 fn challenge_13() {
     let emails = ["bob", "joe", "jane", "annie"];
     for email in emails {
-        dbg!(str::from_utf8(&profile_for(email.as_bytes())).unwrap());
+        dbg!(str::from_utf8(&serialized_profile(email.as_bytes())).unwrap());
     }
 }
 
