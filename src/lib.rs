@@ -670,10 +670,13 @@ allowed to ask the sphinx any # of Qs, with any usernames
 
 #[test]
 fn challenge_13() {
-    let emails = ["bob", "joe", "jane", "annie"];
-    for email in emails {
-        dbg!(str::from_utf8(&serialized_profile(email.as_bytes())).unwrap());
-    }
+    // let emails = ["bob", "joe", "jane", "annie"];
+    // for email in emails {
+    //     dbg!(str::from_utf8(&serialized_profile(email.as_bytes())).unwrap());
+    // }
+    let sphinx = ProfileSphinx::new().unwrap();
+    let admin_cipher_text = generate_admin_cipher_text(&sphinx);
+    assert!(sphinx.decrypt_for(&admin_cipher_text));
 }
 
 struct ProfileSphinx {
@@ -689,6 +692,10 @@ impl ProfileSphinx {
 
     fn profile_for(&self, email: &[u8]) -> Result<Vec<u8>> {
         let serialized_user_object = serialized_profile(email);
+        // println!("SSS -> Profile for: {:?} ({})", serialized_user_object, serialized_user_object.len());
+        // Done automatically
+        // pkcs7_pad(&mut serialized_user_object, 16);
+        // println!("SSS -> Padded: {:?}", serialized_user_object);
 
         Ok(symm::encrypt(
             Cipher::aes_128_ecb(),
@@ -699,10 +706,10 @@ impl ProfileSphinx {
     }
 
     fn decrypt_for(&self, cipher_text: &[u8]) -> bool {
-        let re = Regex::new(r"^email=[^&=]*&uid=\d+&role=(user|admin)$").unwrap();
+        assert!(cipher_text.len() % 16 == 0);
         let plain_text = symm::decrypt(Cipher::aes_128_ecb(), &self.key, None, &cipher_text).unwrap();
-
-        todo!()
+        let plain_text = String::from_utf8(plain_text).unwrap();
+        plain_text.ends_with("admin")
     }
 }
 
@@ -746,12 +753,36 @@ impl User {
 }
 
 fn generate_admin_cipher_text(sphinx: &ProfileSphinx) -> Vec<u8> {
-    todo!()
+    let block_len = 16;
+    let email = b"aaaaa@mail.com";
+
+    let mut encrypted_email = sphinx.profile_for(email).unwrap();
+    let encrypted_len = encrypted_email.len();
+    // println!("Encrypted {:?}", encrypted_email);
+
+    let mut place_holder = b"aaaaaaaaaa".to_vec();
+    // println!("Placeholder length: {}", b"email=aaaaaaaaaa".len());
+    place_holder.extend(b"admin".to_vec());
+    place_holder.extend(vec![11; 11]);
+    place_holder.extend(b"@mail.com".to_vec());
+    // println!("Placeholder: {:?}, length: {}", place_holder, place_holder.len());
+    let encrypted_place_holder = sphinx.profile_for(place_holder.as_slice()).unwrap();
+    // println!("Placeholder {:?}", encrypted_place_holder);
+    let encrypted_place_holder = encrypted_place_holder.get(block_len..2*block_len).unwrap();
+
+    // println!("encrypted {:?} ({})", encrypted_email, encrypted_email.len());
+    encrypted_email.truncate(encrypted_len-block_len);
+    encrypted_email.extend(encrypted_place_holder.to_vec());
+    // println!("encrypted {:?} ({})", encrypted_email, encrypted_email.len());
+
+    encrypted_email
 }
 
 // Normal:
 // email=foo@bar.com&uid=10&role=user
 // Mine:
-// email=(0-0\&uid\=10\&role\=admin)|&uid=1&role=user
-// user: 0-0
-// cypher_text: email=0-0\&uid\=10\&role\=admin
+// (1) Isolate the user in its own block
+// email=aaaaa@mail|.com&uid=1&role=|user
+// (2) Find a replacement block
+// email=aaaaaaaaaa|admin\x0b-\x0b|@mail.com&uid=1&|role=user
+// (3) Replace the last block of the first email with the second block of the second
