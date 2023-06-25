@@ -15,9 +15,8 @@ use anyhow::{Context, Result};
 use base64::prelude::*;
 use itertools::Itertools;
 use lazy_static::lazy_static;
-use openssl::symm::{self, Cipher, Crypter};
+use openssl::{symm::{self, Cipher, Crypter}, rand};
 use test_case::test_case;
-use regex::bytes::Regex;
 
 #[test]
 fn challenge_1() -> Result<()> {
@@ -668,6 +667,15 @@ allowed to ask the sphinx any # of Qs, with any usernames
 
 */
 
+// Normal:
+// email=foo@bar.com&uid=10&role=user
+// Mine:
+// (1) Isolate the user in its own block
+// email=aaaaa@mail|.com&uid=1&role=|user
+// (2) Find a replacement block
+// email=aaaaaaaaaa|admin\x0b-\x0b|@mail.com&uid=1&|role=user
+// (3) Replace the last block of the first email with the second block of the second
+
 #[test]
 fn challenge_13() {
     // let emails = ["bob", "joe", "jane", "annie"];
@@ -778,11 +786,108 @@ fn generate_admin_cipher_text(sphinx: &ProfileSphinx) -> Vec<u8> {
     encrypted_email
 }
 
-// Normal:
-// email=foo@bar.com&uid=10&role=user
-// Mine:
-// (1) Isolate the user in its own block
-// email=aaaaa@mail|.com&uid=1&role=|user
-// (2) Find a replacement block
-// email=aaaaaaaaaa|admin\x0b-\x0b|@mail.com&uid=1&|role=user
-// (3) Replace the last block of the first email with the second block of the second
+#[test]
+fn challenge_14() -> Result<()> {
+    let b64 = b"Um9sbGluJyBpbiBteSA1LjAKV2l0aCBteSByYWctdG9wIGRvd24gc28gbXkgaGFpciBjYW4gYmxvdwpUaGUgZ2lybGllcyBvbiBzdGFuZGJ5IHdhdmluZyBqdXN0IHRvIHNheSBoaQpEaWQgeW91IHN0b3A/IE5vLCBJIGp1c3QgZHJvdmUgYnkK";
+    let mut secret_string = base64_decode(b64)?;
+    secret_string.truncate(16);
+
+    let sphinx = RandomPrefixSphinx::new(secret_string.clone())?;
+    let message = decrypt_prefix_sphinx(&sphinx)?;
+
+    assert_eq!(message, secret_string);
+
+    Ok(())
+}
+
+// assumptions:
+// * secret suffix length = 16
+
+// 1. call Sphinx::encrypt("x") 160 times
+// 2. look at the distribution of lengths
+// * ~10 times, we expect to see 48 bytes of ciphertext
+//   (15 random padding, 1 byte "x", 16 bytes suffix, 16 bytes padding)
+
+// 3. for all A,
+//    call Sphinx::encrypt("x | 000...000A") 160 times
+//                              ^ 15 zeros and A (where A \in {0..256})
+// 4. 1/16 of the time, ciphertext will be length 64
+//    and there's a block boundary at the '|'
+//    in all of these cases, we can write down the ciphertext for the block
+//    00..00A and we now want to compare this against the "true" ciphertext,
+//    so that we've brute-forced the "true" value of A.
+// 5. find the "true" ciphertext by calling Sphinx::encrypt("x | 000...000")
+//    (without the A) some number of times (details.......?)
+// 6. 1/16 of the time, this will result in a cipherblock we've seen before
+//    from step 4 (yay! that means the random padding was len=15; done.)
+
+fn decrypt_prefix_sphinx(sphinx: &RandomPrefixSphinx) -> Result<Vec<u8>> {
+    // cipherblock -> guess-byte
+    let mut map = HashMap::new();
+
+    let mut input = vec![0; 17];
+    input[0] = b'x';
+
+    for guess in 0..=u8::MAX {
+        input[16] = guess;
+
+        let cipherblock = loop {
+            let ciphertext = sphinx.encrypt(&input)?;
+            // dbg!((input.len(), guess, ciphertext.len()));
+            assert!([48, 64].contains(&ciphertext.len()));
+            if ciphertext.len() == 64 {
+                // in this case, the random padding is a "nice" length.
+                break ciphertext[16..32].to_vec();
+            }
+        };
+
+        map.insert(cipherblock, guess);
+    }
+
+    // find one of these cipherblocks
+    let first_byte = loop {
+        let mut input = vec![0; 16];
+        input[0] = b'x';
+        let ciphertext = sphinx.encrypt(&input)?;
+        let cipherblock = &ciphertext[16..32];
+        if let Some(&guess_byte) = map.get(cipherblock) {
+            break guess_byte;
+        }
+    };
+
+    Ok(vec![first_byte])
+}
+
+struct RandomPrefixSphinx {
+    key: Vec<u8>,
+    plaintext_suffix: Vec<u8>,
+}
+
+impl RandomPrefixSphinx {
+    fn new(plaintext_suffix: Vec<u8>) -> Result<Self> {
+        let key = random_aes_key()?.to_vec();
+        Ok(Self {
+            key,
+            plaintext_suffix,
+        })
+    }
+
+    fn encrypt(&self, plaintext_infix: &[u8]) -> Result<Vec<u8>> {
+        // generate a random prefix
+        let prefix_len = random_aes_key()?[0] % 16;
+        let mut prefix = vec![0; prefix_len as usize];
+        rand::rand_bytes(&mut prefix)?;
+
+        let mut plaintext = vec![];
+        plaintext.extend_from_slice(&prefix);
+        plaintext.extend_from_slice(plaintext_infix);
+        plaintext.extend_from_slice(&self.plaintext_suffix);
+
+        Ok(symm::encrypt(
+            Cipher::aes_128_ecb(),
+            &self.key,
+            None,
+            &plaintext,
+        )?)
+    }
+}
