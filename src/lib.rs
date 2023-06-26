@@ -821,15 +821,18 @@ fn challenge_14() -> Result<()> {
 // 6. 1/16 of the time, this will result in a cipherblock we've seen before
 //    from step 4 (yay! that means the random padding was len=15; done.)
 
-fn decrypt_prefix_sphinx(sphinx: &RandomPrefixSphinx) -> Result<Vec<u8>> {
+fn brute_force_next_byte(sphinx: &RandomPrefixSphinx, current_guess: &[u8]) -> Result<u8> {
+    let block_size = 16;
+    let mut input = generate_padding(current_guess, block_size);
+
     // cipherblock -> guess-byte
     let mut map = HashMap::new();
 
-    let mut input = vec![0; 17];
-    input[0] = b'x';
+    // let mut input = vec![0; 17];
+    // input[0] = b'x';
 
     for guess in 0..=u8::MAX {
-        input[16] = guess;
+        input.push(guess);
 
         let cipherblock = loop {
             let ciphertext = sphinx.encrypt(&input)?;
@@ -842,12 +845,14 @@ fn decrypt_prefix_sphinx(sphinx: &RandomPrefixSphinx) -> Result<Vec<u8>> {
         };
 
         map.insert(cipherblock, guess);
+        input.pop();
     }
 
     // find one of these cipherblocks
+    input.truncate(input.len() - current_guess.len());
     let first_byte = loop {
-        let mut input = vec![0; 16];
-        input[0] = b'x';
+        // let mut input = vec![0; 16];
+        // input[0] = b'x';
         let ciphertext = sphinx.encrypt(&input)?;
         let cipherblock = &ciphertext[16..32];
         if let Some(&guess_byte) = map.get(cipherblock) {
@@ -855,7 +860,29 @@ fn decrypt_prefix_sphinx(sphinx: &RandomPrefixSphinx) -> Result<Vec<u8>> {
         }
     };
 
-    Ok(vec![first_byte])
+    Ok(first_byte)
+
+}
+
+fn generate_padding(current_guess: &[u8], block_size: usize) -> Vec<u8> {
+    let current_len = current_guess.len();
+    let pad_len = block_size - (current_len % block_size);
+    let mut pad = vec![0u8; pad_len];
+    pad[0] = b'x';
+    pad.extend_from_slice(current_guess);
+    pad
+}
+
+fn decrypt_prefix_sphinx(sphinx: &RandomPrefixSphinx) -> Result<Vec<u8>> {
+    let suffix_len = 16;
+    //println!("--> Length of encrypted text: {}", suffix_len);
+    let mut suffix = vec![0; suffix_len];
+
+    for i in 0..suffix_len {
+        suffix[i] = brute_force_next_byte(sphinx, &suffix[..i])?;
+    }
+
+    Ok(suffix)
 }
 
 struct RandomPrefixSphinx {
