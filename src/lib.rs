@@ -11,7 +11,7 @@ use std::{
     sync::Mutex,
 };
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use base64::prelude::*;
 use itertools::Itertools;
 use lazy_static::lazy_static;
@@ -917,4 +917,32 @@ impl RandomPrefixSphinx {
             &plaintext,
         )?)
     }
+}
+
+#[test_case(b"ICE ICE BABY\x04\x04\x04\x04", 16, Some(b"ICE ICE BABY"))]
+#[test_case(b"ICE ICE BABY\x05\x05\x05\x05", 16, None)]
+#[test_case(b"ICE ICE BABY\x01\x02\x03\x04", 16, None)]
+fn challenge_15(input: &[u8], block_len: usize, expected: Option<&[u8]>) {
+    let mut buf = Vec::from(input);
+    let result = pkcs7_unpad(&mut buf, block_len);
+
+    if let Some(expected) = expected {
+        assert!(result.is_ok());
+        assert_eq!(buf, expected);
+    } else {
+        assert!(result.is_err());
+    }
+}
+
+fn pkcs7_unpad(buf: &mut Vec<u8>, block_len: usize) -> Result<()> {
+    ensure!(buf.len() % block_len == 0);
+
+    let pad_len = *buf.last().context("buffer can't be empty")?;
+    ensure!(pad_len as usize <= block_len);
+
+    let new_len = buf.len() - pad_len as usize;
+    ensure!(buf[new_len..].iter().all(|&byte| byte == pad_len));
+
+    buf.truncate(new_len);
+    Ok(())
 }
