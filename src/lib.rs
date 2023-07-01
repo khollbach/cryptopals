@@ -947,9 +947,13 @@ fn pkcs7_unpad(buf: &mut Vec<u8>, block_len: usize) -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn challenge_16() -> Result<()>{
-
+#[test_case(b";hello=world;", false)]
+#[test_case(b";admin=true;", false)]
+#[test_case(b"", false)]
+fn challenge_16(input: &[u8], expected: bool) -> Result<()>{
+    let sphinx = BitFlipSphinx::new()?;
+    let ciphertext = sphinx.encrypt(input)?;
+    assert!(sphinx.decrypt(&ciphertext).unwrap() == expected);
     Ok(())
 }
 
@@ -975,17 +979,39 @@ impl BitFlipSphinx {
         let suffix = b";comment2=%20like%20a%20pound%20of%20bacon";
 
         let mut clean_plaintext = vec![];
+        let mut escaped = escaped_special_characters(plaintext);
+        // dbg!(String::from_utf8(escaped.clone()));
         clean_plaintext.extend_from_slice(prefix);
-        clean_plaintext.append(&mut escaped_special_characters(plaintext));
+        clean_plaintext.append(&mut escaped);
         clean_plaintext.extend_from_slice(suffix);
+        // dbg!(String::from_utf8(clean_plaintext.clone()));
+
 
         Ok(symm::encrypt(
-            Cipher::aes_128_ecb(),
+            Cipher::aes_128_cbc(),
             &self.key,
             Some(&self.iv),
-            &plaintext,
+            &clean_plaintext,
         )?)
     }
+
+    fn decrypt(&self, ciphertext: &[u8]) -> Result<bool> {
+        let plaintext = symm::decrypt(
+            Cipher::aes_128_cbc(), 
+            &self.key, 
+            Some(&self.iv), 
+            ciphertext).unwrap();
+        // dbg!(String::from_utf8(plaintext.clone()));
+        Ok(contains_needle(&plaintext, b";admin=true;"))
+    }
+ }
+
+ fn find_needle(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack.windows(needle.len()).position(|window| window == needle)
+}
+
+fn contains_needle(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack.windows(needle.len()).any(|window| window == needle)
 }
 
 fn escaped_special_characters(plaintext: &[u8]) -> Vec<u8> {
