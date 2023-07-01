@@ -11,11 +11,14 @@ use std::{
     sync::Mutex,
 };
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{ensure, Context, Result};
 use base64::prelude::*;
 use itertools::Itertools;
 use lazy_static::lazy_static;
-use openssl::{symm::{self, Cipher, Crypter}, rand};
+use openssl::{
+    rand,
+    symm::{self, Cipher, Crypter},
+};
 use test_case::test_case;
 
 #[test]
@@ -58,9 +61,18 @@ fn challenge_2() -> Result<()> {
     Ok(())
 }
 
+#[must_use]
 fn xor_with(bytes: &[u8], key: &[u8]) -> Vec<u8> {
     let key_repeated = key.iter().cycle();
     zip(bytes, key_repeated).map(|(x, y)| x ^ y).collect()
+}
+
+#[allow(unused)]
+fn xor_in_place(bytes: &mut [u8], key: &[u8]) {
+    let key_repeated = key.iter().cycle();
+    for (x, y) in zip(bytes, key_repeated) {
+        *x ^= y;
+    }
 }
 
 #[test]
@@ -715,7 +727,8 @@ impl ProfileSphinx {
 
     fn decrypt_for(&self, cipher_text: &[u8]) -> bool {
         assert!(cipher_text.len() % 16 == 0);
-        let plain_text = symm::decrypt(Cipher::aes_128_ecb(), &self.key, None, &cipher_text).unwrap();
+        let plain_text =
+            symm::decrypt(Cipher::aes_128_ecb(), &self.key, None, &cipher_text).unwrap();
         let plain_text = String::from_utf8(plain_text).unwrap();
         plain_text.ends_with("admin")
     }
@@ -776,10 +789,12 @@ fn generate_admin_cipher_text(sphinx: &ProfileSphinx) -> Vec<u8> {
     // println!("Placeholder: {:?}, length: {}", place_holder, place_holder.len());
     let encrypted_place_holder = sphinx.profile_for(place_holder.as_slice()).unwrap();
     // println!("Placeholder {:?}", encrypted_place_holder);
-    let encrypted_place_holder = encrypted_place_holder.get(block_len..2*block_len).unwrap();
+    let encrypted_place_holder = encrypted_place_holder
+        .get(block_len..2 * block_len)
+        .unwrap();
 
     // println!("encrypted {:?} ({})", encrypted_email, encrypted_email.len());
-    encrypted_email.truncate(encrypted_len-block_len);
+    encrypted_email.truncate(encrypted_len - block_len);
     encrypted_email.extend(encrypted_place_holder.to_vec());
     // println!("encrypted {:?} ({})", encrypted_email, encrypted_email.len());
 
@@ -861,7 +876,6 @@ fn brute_force_next_byte(sphinx: &RandomPrefixSphinx, current_guess: &[u8]) -> R
     };
 
     Ok(first_byte)
-
 }
 
 fn generate_padding(current_guess: &[u8], block_size: usize) -> Vec<u8> {
@@ -950,10 +964,40 @@ fn pkcs7_unpad(buf: &mut Vec<u8>, block_len: usize) -> Result<()> {
 #[test_case(b";hello=world;", false)]
 #[test_case(b";admin=true;", false)]
 #[test_case(b"", false)]
-fn challenge_16(input: &[u8], expected: bool) -> Result<()>{
+fn challenge_16(input: &[u8], expected: bool) -> Result<()> {
     let sphinx = BitFlipSphinx::new()?;
     let ciphertext = sphinx.encrypt(input)?;
     assert!(sphinx.decrypt(&ciphertext).unwrap() == expected);
+    Ok(())
+}
+
+#[test]
+fn break_bitflip_sphinx() -> Result<()> {
+    let prefix = b"comment1=cooking%20MCs;userdata=";
+    let _suffix = b";comment2=%20like%20a%20pound%20of%20bacon";
+    let target_text = b";admin=true";
+    //                  0123456
+
+    let sphinx = BitFlipSphinx::new()?;
+
+    // one block of padding, plus enough space for the target text.
+    let mut input = vec![b'a'; 16];
+    input.extend_from_slice(target_text);
+
+    // Flip bits so that these characters don't get escaped.
+    input[16] ^= 1; // ; becomes :
+    input[16 + 6] ^= 1; // = becomes <
+
+    let mut cipher = sphinx.encrypt(&input)?;
+
+    // Flip bits in the padding block, to make the target text appear.
+    let offset = prefix.len();
+    cipher[offset] ^= 1;
+    cipher[offset + 6] ^= 1;
+
+    let success = sphinx.decrypt(&cipher)?;
+    assert!(success);
+
     Ok(())
 }
 
@@ -967,10 +1011,7 @@ impl BitFlipSphinx {
         let key = random_aes_key()?.to_vec();
         let iv = random_aes_key()?.to_vec();
 
-        Ok(Self {
-            key,
-            iv,
-        })
+        Ok(Self { key, iv })
     }
 
     fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>> {
@@ -986,7 +1027,6 @@ impl BitFlipSphinx {
         clean_plaintext.extend_from_slice(suffix);
         // dbg!(String::from_utf8(clean_plaintext.clone()));
 
-
         Ok(symm::encrypt(
             Cipher::aes_128_cbc(),
             &self.key,
@@ -996,22 +1036,17 @@ impl BitFlipSphinx {
     }
 
     fn decrypt(&self, ciphertext: &[u8]) -> Result<bool> {
-        let plaintext = symm::decrypt(
-            Cipher::aes_128_cbc(), 
-            &self.key, 
-            Some(&self.iv), 
-            ciphertext).unwrap();
-        // dbg!(String::from_utf8(plaintext.clone()));
+        let plaintext =
+            symm::decrypt(Cipher::aes_128_cbc(), &self.key, Some(&self.iv), ciphertext).unwrap();
+        dbg!(String::from_utf8_lossy(&plaintext));
         Ok(contains_needle(&plaintext, b";admin=true;"))
     }
- }
-
- fn find_needle(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack.windows(needle.len()).position(|window| window == needle)
 }
 
 fn contains_needle(haystack: &[u8], needle: &[u8]) -> bool {
-    haystack.windows(needle.len()).any(|window| window == needle)
+    haystack
+        .windows(needle.len())
+        .any(|window| window == needle)
 }
 
 fn escaped_special_characters(plaintext: &[u8]) -> Vec<u8> {
@@ -1038,7 +1073,7 @@ fn escaped_special_characters(plaintext: &[u8]) -> Vec<u8> {
     //         },
     //         b';' => {
     //             Either::Left(b"%3B".into_iter())
-    //         }, 
+    //         },
     //         b'%' => {
     //             Either::Left(b"%25".into_iter())
     //         }
