@@ -989,23 +989,37 @@ impl BitFlipSphinx {
 }
 
 fn escaped_special_characters(plaintext: &[u8]) -> Vec<u8> {
-    plaintext
-        .iter()
-        .map(|h| match h {
-            b'=' => {
-                b"%3D".as_slice()
-            },
-            b';' => {
-                b"%3B".as_slice()
-            }, 
-            b'%' => {
-                b"%25".as_slice()
-            }
-            _ => {
-                &[*h]
-            }
-        })
-        .flatten()
-        .copied()
-        .collect()
+    let mut out = Vec::with_capacity(plaintext.len());
+
+    for &c in plaintext {
+        let c_slice = [c];
+        let bytes = match c {
+            b'=' => b"%3D".as_slice(),
+            b';' => b"%3B".as_slice(),
+            b'%' => b"%25".as_slice(),
+            _ => &c_slice,
+        };
+        out.extend_from_slice(bytes);
+    }
+
+    out
+
+    // plaintext
+    //     .iter()
+    //     .flat_map(|h| match h {
+    //         b'=' => {
+    //             Either::Left(b"%3D".into_iter())
+    //         },
+    //         b';' => {
+    //             Either::Left(b"%3B".into_iter())
+    //         }, 
+    //         b'%' => {
+    //             Either::Left(b"%25".into_iter())
+    //         }
+    //         _ => {
+    //             Either::Right([h].into_iter())
+    //         }
+    //     })
+    //     .copied()
+    //     .collect()
 }
