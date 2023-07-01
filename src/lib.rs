@@ -946,3 +946,66 @@ fn pkcs7_unpad(buf: &mut Vec<u8>, block_len: usize) -> Result<()> {
     buf.truncate(new_len);
     Ok(())
 }
+
+#[test]
+fn challenge_16() -> Result<()>{
+
+    Ok(())
+}
+
+struct BitFlipSphinx {
+    key: Vec<u8>,
+    iv: Vec<u8>,
+}
+
+impl BitFlipSphinx {
+    fn new() -> Result<Self> {
+        let key = random_aes_key()?.to_vec();
+        let iv = random_aes_key()?.to_vec();
+
+        Ok(Self {
+            key,
+            iv,
+        })
+    }
+
+    fn encrypt(&self, plaintext: &[u8]) -> Result<Vec<u8>> {
+        // generate a random prefix
+        let prefix = b"comment1=cooking%20MCs;userdata=";
+        let suffix = b";comment2=%20like%20a%20pound%20of%20bacon";
+
+        let mut clean_plaintext = vec![];
+        clean_plaintext.extend_from_slice(prefix);
+        clean_plaintext.append(&mut escaped_special_characters(plaintext));
+        clean_plaintext.extend_from_slice(suffix);
+
+        Ok(symm::encrypt(
+            Cipher::aes_128_ecb(),
+            &self.key,
+            Some(&self.iv),
+            &plaintext,
+        )?)
+    }
+}
+
+fn escaped_special_characters(plaintext: &[u8]) -> Vec<u8> {
+    plaintext
+        .iter()
+        .map(|h| match h {
+            b'=' => {
+                b"%3D".as_slice()
+            },
+            b';' => {
+                b"%3B".as_slice()
+            }, 
+            b'%' => {
+                b"%25".as_slice()
+            }
+            _ => {
+                &[*h]
+            }
+        })
+        .flatten()
+        .copied()
+        .collect()
+}
