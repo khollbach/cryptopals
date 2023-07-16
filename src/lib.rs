@@ -956,6 +956,7 @@ fn pkcs7_unpad(buf: &mut Vec<u8>, block_len: usize) -> Result<()> {
     ensure!(buf.len() % block_len == 0);
 
     let pad_len = *buf.last().context("buffer can't be empty")?;
+    ensure!(pad_len != 0);
     ensure!(pad_len as usize <= block_len);
 
     let new_len = buf.len() - pad_len as usize;
@@ -1124,13 +1125,13 @@ impl CbcPaddingSphoracle {
         //     symm::encrypt(Cipher::aes_128_cbc(), &self.key, Some(&iv), &rand_string)?,
         //     iv,
         // ))
-        Ok( (cbc_encrypt(&rand_string, &self.key, &iv)?, iv,) )
+        Ok((cbc_encrypt(&rand_string, &self.key, &iv)?, iv))
     }
 
     fn decrypt(&self, ciphertext: &[u8], iv: &[u8]) -> Result<bool> {
         let mut plaintext = cbc_decrypt(ciphertext, &self.key, &iv)?;
         // symm::decrypt(Cipher::aes_128_cbc(), &self.key, Some(&iv), &ciphertext)?;
-        println!("{}", String::from_utf8_lossy(&plaintext));
+        // dbg!(String::from_utf8_lossy(&plaintext));
         Ok(pkcs7_unpad(&mut plaintext, 16).is_ok())
     }
 }
@@ -1138,7 +1139,69 @@ impl CbcPaddingSphoracle {
 #[test]
 fn challenge_17() -> Result<()> {
     let sphoracle = CbcPaddingSphoracle::new()?;
+
     let (ciphertext, iv) = sphoracle.encrypt()?;
-    assert!(sphoracle.decrypt(&ciphertext, &iv)?);
+    assert_eq!(ciphertext.len() % 16, 0);
+
+    let mut message = Vec::with_capacity(ciphertext.len());
+
+    let mut prev = iv.as_slice();
+    for cipherblock in ciphertext.chunks(16) {
+        assert_eq!(cipherblock.len(), 16);
+
+        let block = guess_block(&sphoracle, Iv(prev.try_into().unwrap()), cipherblock)?;
+        dbg!(String::from_utf8_lossy(&block));
+        message.extend_from_slice(&block);
+
+        prev = cipherblock;
+    }
+
+    // dbg!(String::from_utf8_lossy(&message));
+
     Ok(())
+}
+
+struct Iv([u8; 16]);
+
+fn guess_block(sphoracle: &CbcPaddingSphoracle, Iv(iv): Iv, cipherblock: &[u8]) -> Result<Vec<u8>> {
+    // Fills up from the back.
+    let mut known = vec![0; 16];
+
+    for num_padding in 1..=16 {
+        // goal: guess i-th last byte of first plainblock
+        for mask in 0.. {
+            if mask >= 256 {
+                panic!("couldn't guess byte {num_padding}");
+            }
+
+            let target_idx = 16 - num_padding;
+
+            // copy iv and leave the original unchanged, for the next iteration.
+            let mut iv = iv;
+
+            // flip known bytes (0s in prefix of `known` get ignored)
+            xor_in_place(&mut iv, &known);
+            // enforce padding bytes in those positions
+            for j in target_idx + 1..16 {
+                iv[j] ^= num_padding as u8;
+            }
+
+            // flip bits in ith last byte of IV
+            iv[target_idx] ^= mask as u8;
+
+            // check if that is creating a valid-ly padded plainblock
+            let success = sphoracle.decrypt(cipherblock, &iv)?;
+            if success {
+                let guess = mask as u8 ^ num_padding as u8;
+                // dbg!(guess, guess as char);
+
+                known[target_idx] = guess;
+                break;
+            }
+        }
+    }
+
+    // let s = String::from_utf8_lossy(&known);
+    // dbg!(s);
+    Ok(known)
 }
