@@ -429,23 +429,14 @@ fn challenge_11() -> Result<()> {
     Ok(())
 }
 
-#[derive(PartialEq, Eq, Clone, Copy)]
-#[allow(unused)]
-enum Mode {
-    Encrypt,
-    Decrypt,
-}
-
-fn cbc_decrypt(text: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8>> {
-    assert_eq!(text.len() % 16, 0);
-
-    let mut out = Vec::with_capacity(text.len());
+fn cbc_decrypt(ciphertext: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8>> {
+    assert_eq!(ciphertext.len() % 16, 0);
+    let mut out = Vec::with_capacity(ciphertext.len());
     let mut prev_cipher_block = Vec::from(iv);
 
     let cipher = Cipher::aes_128_ecb();
-    let cipher_len = dbg!(cipher.block_size());
-
-    for block in text.chunks(16) {
+    let cipher_len = cipher.block_size();
+    for block in ciphertext.chunks(16) {
         assert_eq!(block.len(), 16);
 
         let mut decryptor = Crypter::new(cipher, symm::Mode::Decrypt, key, None)?;
@@ -468,23 +459,20 @@ fn cbc_decrypt(text: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-#[allow(unused)]
-fn cbc_encrypt_decrypt(text: &[u8], key: &[u8], iv: &[u8], mode: Mode) -> Result<Vec<u8>> {
-    let mut text = Vec::from(text);
+fn cbc_encrypt(plaintext: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8>> {
+    assert!(plaintext.len() % 16 == 0);
 
-    // Pad inputs.
-    if mode == Mode::Encrypt {
-        pkcs7_pad(&mut text, 16);
-    }
-
-    let mut out = Vec::with_capacity(text.len());
+    let mut out = Vec::with_capacity(plaintext.len());
 
     let mut prev_cipher_block = Vec::from(iv);
 
-    for block in text.chunks(16) {
+    for block in plaintext.chunks(16) {
         assert_eq!(block.len(), 16); // b/c of padding
 
-        let cipher_block = cbc_block(block, &prev_cipher_block, key, mode)?;
+        let salted_block = xor_with(block, &prev_cipher_block);
+        let mut cipher_block = symm::encrypt(Cipher::aes_128_ecb(), &key, None, &salted_block)?;
+        cipher_block.truncate(16);
+        assert_eq!(cipher_block.len(), 16);
 
         out.extend_from_slice(&cipher_block);
         prev_cipher_block = cipher_block;
@@ -493,43 +481,59 @@ fn cbc_encrypt_decrypt(text: &[u8], key: &[u8], iv: &[u8], mode: Mode) -> Result
     Ok(out)
 }
 
-fn cbc_block(
-    block: &[u8],
-    prev_cipher_block: &[u8],
-    key: &[u8],
-    mode: Mode,
-    // out: &mut Vec<u8>,
-) -> Result<Vec<u8>> {
-    let salted_block = if mode == Mode::Encrypt {
-        xor_with(block, prev_cipher_block)
-    } else {
-        Vec::from(block)
-    };
+// fn cbc_block(
+//     block: &[u8],
+//     prev_cipher_block: &[u8],
+//     key: &[u8],
+//     mode: Mode,
+//     // out: &mut Vec<u8>,
+// ) -> Result<Vec<u8>> {
+//     let salted_block = if mode == Mode::Encrypt {
+//         xor_with(block, prev_cipher_block)
+//     } else {
+//         Vec::from(block)
+//     };
 
-    let cipher = Cipher::aes_128_ecb();
-    let crypted_block = if mode == Mode::Encrypt {
-        symm::encrypt(cipher, key, None, &salted_block)?
+//     let cipher = Cipher::aes_128_ecb();
+//     let crypted_block = if mode == Mode::Encrypt {
+//         symm::encrypt(cipher, key, None, &salted_block)?
 
-        // TODO(kevan): clean this up, test it against an input of your choice.
+//         // TODO(kevan): clean this up, test it against an input of your choice.
 
-        // let mut decryptor = Crypter::new(cipher, symm::Mode::Encrypt, key, None)?;
-        // decryptor.pad(false); // !!!!!!!!!
+//         // let mut decryptor = Crypter::new(cipher, symm::Mode::Encrypt, key, None)?;
+//         // decryptor.pad(false); // !!!!!!!!!
 
-        // let mut decrypted_text = vec![0; block.len() + cipher_len];
+//         // let mut decrypted_text = vec![0; block.len() + cipher_len];
 
-        // let mut bytes_written = decryptor.update(&block, &mut decrypted_text)?;
-        // bytes_written += decryptor.finalize(&mut decrypted_text)?;
-    } else {
-        symm::decrypt(cipher, key, None, &salted_block)?
-    };
+//         // let mut bytes_written = decryptor.update(&block, &mut decrypted_text)?;
+//         // bytes_written += decryptor.finalize(&mut decrypted_text)?;
+//     } else {
+//         symm::decrypt(cipher, key, None, &salted_block)?
+//     };
 
-    let unsalted_block = if mode == Mode::Encrypt {
-        Vec::from(block)
-    } else {
-        xor_with(&crypted_block, prev_cipher_block)
-    };
+//     let unsalted_block = if mode == Mode::Encrypt {
+//         Vec::from(block)
+//     } else {
+//         xor_with(&crypted_block, prev_cipher_block)
+//     };
 
-    Ok(unsalted_block)
+//     Ok(unsalted_block)
+// }
+#[test]
+fn cbc_test() -> Result<()> {
+    let block_len = 16;
+    let plaintext = b"Now that the party is jumpin'";
+    let mut padded = plaintext.to_vec();
+    pkcs7_pad(&mut padded, 16);
+
+    let key = random_aes_key()?;
+    let iv = random_aes_key()?;
+    let ciphertext = cbc_encrypt(&padded, &key, &iv)?;
+    let mut decrypted = cbc_decrypt(&ciphertext, &key, &iv)?;
+    print!("Decrypted string: {}", String::from_utf8_lossy(&decrypted));
+    pkcs7_unpad(&mut decrypted, block_len)?;
+    assert_eq!(plaintext.as_slice(), decrypted);
+    Ok(())
 }
 
 fn random_aes_key() -> Result<[u8; 16]> {
@@ -1083,4 +1087,58 @@ fn escaped_special_characters(plaintext: &[u8]) -> Vec<u8> {
     //     })
     //     .copied()
     //     .collect()
+}
+
+fn decode_base64_file_into_lines(path: impl AsRef<Path>) -> io::Result<Vec<Vec<u8>>> {
+    let full_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(path);
+    let file = File::open(full_path)?;
+
+    BufReader::new(file)
+        .lines()
+        .map_ok(String::into_bytes)
+        .map_ok(|bytes| base64_decode(bytes).unwrap())
+        .collect()
+}
+
+struct CbcPaddingSphoracle {
+    key: Vec<u8>,
+}
+
+impl CbcPaddingSphoracle {
+    fn new() -> Result<Self> {
+        let key = random_aes_key()?.to_vec();
+        Ok(Self { key })
+    }
+
+    fn encrypt(&self) -> Result<(Vec<u8>, Vec<u8>)> {
+        let iv = random_aes_key()?.to_vec();
+        let mut rand_byte = [0; 1];
+        openssl::rand::rand_bytes(&mut rand_byte)?;
+        let [rand_byte] = rand_byte;
+
+        let input_strings = decode_base64_file_into_lines("inputs/3-17")?;
+        let mut rand_string = input_strings[rand_byte as usize % 10].clone();
+        pkcs7_pad(&mut rand_string, 16);
+
+        // Ok((
+        //     symm::encrypt(Cipher::aes_128_cbc(), &self.key, Some(&iv), &rand_string)?,
+        //     iv,
+        // ))
+        Ok( (cbc_encrypt(&rand_string, &self.key, &iv)?, iv,) )
+    }
+
+    fn decrypt(&self, ciphertext: &[u8], iv: &[u8]) -> Result<bool> {
+        let mut plaintext = cbc_decrypt(ciphertext, &self.key, &iv)?;
+        // symm::decrypt(Cipher::aes_128_cbc(), &self.key, Some(&iv), &ciphertext)?;
+        println!("{}", String::from_utf8_lossy(&plaintext));
+        Ok(pkcs7_unpad(&mut plaintext, 16).is_ok())
+    }
+}
+
+#[test]
+fn challenge_17() -> Result<()> {
+    let sphoracle = CbcPaddingSphoracle::new()?;
+    let (ciphertext, iv) = sphoracle.encrypt()?;
+    assert!(sphoracle.decrypt(&ciphertext, &iv)?);
+    Ok(())
 }
