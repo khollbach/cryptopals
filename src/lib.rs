@@ -962,6 +962,8 @@ fn pkcs7_unpad(buf: &mut Vec<u8>, block_len: usize) -> Result<()> {
     let new_len = buf.len() - pad_len as usize;
     ensure!(buf[new_len..].iter().all(|&byte| byte == pad_len));
 
+    // eprintln!("successful unpad: {pad_len}");
+
     buf.truncate(new_len);
     Ok(())
 }
@@ -1150,13 +1152,13 @@ fn challenge_17() -> Result<()> {
         assert_eq!(cipherblock.len(), 16);
 
         let block = guess_block(&sphoracle, Iv(prev.try_into().unwrap()), cipherblock)?;
-        dbg!(String::from_utf8_lossy(&block));
+        // dbg!(String::from_utf8_lossy(&block));
         message.extend_from_slice(&block);
 
         prev = cipherblock;
     }
 
-    // dbg!(String::from_utf8_lossy(&message));
+    dbg!(String::from_utf8_lossy(&message));
 
     Ok(())
 }
@@ -1169,8 +1171,8 @@ fn guess_block(sphoracle: &CbcPaddingSphoracle, Iv(iv): Iv, cipherblock: &[u8]) 
 
     for num_padding in 1..=16 {
         // goal: guess i-th last byte of first plainblock
-        for mask in 0.. {
-            if mask >= 256 {
+        for mask in (-1..=u8::MAX as i32).rev() {
+            if mask == -1 {
                 panic!("couldn't guess byte {num_padding}");
             }
 
