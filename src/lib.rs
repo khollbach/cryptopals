@@ -1211,7 +1211,7 @@ fn guess_block(sphoracle: &CbcPaddingSphoracle, Iv(iv): Iv, cipherblock: &[u8]) 
 fn ctr_crypt(plaintext: &[u8], key: &[u8], nonce: &[u8]) -> Result<Vec<u8>> {
     let mut out = Vec::with_capacity(plaintext.len());
     let mut counter: u64 = 0;
-    let chunk_size = 2* nonce.len();
+    let chunk_size = 2 * nonce.len();
 
     for block in plaintext.chunks(chunk_size) {
         let mut pad = nonce.to_vec();
@@ -1230,8 +1230,57 @@ fn ctr_crypt(plaintext: &[u8], key: &[u8], nonce: &[u8]) -> Result<Vec<u8>> {
 fn challenge_18() -> Result<()> {
     let nonce: u64 = 0;
     let key = b"YELLOW SUBMARINE";
-    let ciphertext = base64_decode("L77na/nrFsKvynd6HzOoG7GHTLXsTVu9qvY/2syLXzhPweyyMTJULu/6/kXX0KSvoOLSFQ==")?;
+    let ciphertext =
+        base64_decode("L77na/nrFsKvynd6HzOoG7GHTLXsTVu9qvY/2syLXzhPweyyMTJULu/6/kXX0KSvoOLSFQ==")?;
     let plaintext = ctr_crypt(&ciphertext, key, &nonce.to_le_bytes())?;
     println!("{:?}", String::from_utf8_lossy(&plaintext));
     Ok(())
+}
+
+/// Looks we accidentally predicted the approach described in challenge 20.
+///
+/// Possible todo: understand & implement the challenge-19 approach.
+#[test]
+fn challenge_19_20() -> Result<()> {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/inputs/3-19");
+    let lines = decode_base64_file_into_lines(path)?;
+
+    let key = b"YELLOW SUBMARINE";
+    let nonce = [0u8; 8];
+
+    let encrypted_rows: Vec<_> = lines
+        .into_iter()
+        .map(|line| ctr_crypt(&line, key, &nonce))
+        .collect::<Result<_>>()?;
+
+    let encrypted_cols = get_cols(&encrypted_rows);
+    let guessed_keystream: Vec<_> = encrypted_cols.iter().map(|col| best_key(col)).collect();
+
+    for mut row in encrypted_rows {
+        xor_in_place(&mut row, &guessed_keystream);
+        let s = String::from_utf8_lossy(&row);
+        dbg!(s);
+    }
+
+    Ok(())
+}
+
+/// If the rows are jagged, some of the later columns will have fewer elements.
+fn get_cols(rows: &[impl AsRef<[u8]>]) -> Vec<Vec<u8>> {
+    let longest_row = rows.iter().map(|row| row.as_ref().len()).max().unwrap_or(0);
+    let mut cols = vec![vec![]; longest_row];
+
+    for row in rows {
+        for (i, &x) in row.as_ref().iter().enumerate() {
+            cols[i].push(x);
+        }
+    }
+
+    cols
+}
+
+#[test_case(&["abc", "de", "", "f"].map(str::as_bytes), &["adf", "be", "c"].map(str::as_bytes))]
+fn test_get_cols(input: &[&[u8]], expected: &[&[u8]]) {
+    let actual = get_cols(input);
+    assert_eq!(expected, actual);
 }
