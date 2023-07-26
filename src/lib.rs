@@ -1207,3 +1207,31 @@ fn guess_block(sphoracle: &CbcPaddingSphoracle, Iv(iv): Iv, cipherblock: &[u8]) 
     // dbg!(s);
     Ok(known)
 }
+
+fn ctr_crypt(plaintext: &[u8], key: &[u8], nonce: &[u8]) -> Result<Vec<u8>> {
+    let mut out = Vec::with_capacity(plaintext.len());
+    let mut counter: u64 = 0;
+    let chunk_size = 2* nonce.len();
+
+    for block in plaintext.chunks(chunk_size) {
+        let mut pad = nonce.to_vec();
+        pad.extend_from_slice(&counter.to_le_bytes());
+        let mut encrypted_pad = symm::encrypt(Cipher::aes_128_ecb(), key, None, &pad)?;
+        encrypted_pad.truncate(16);
+
+        xor_in_place(&mut encrypted_pad, block);
+        out.extend_from_slice(&encrypted_pad[..block.len()]);
+        counter += 1;
+    }
+    Ok(out)
+}
+
+#[test]
+fn challenge_18() -> Result<()> {
+    let nonce: u64 = 0;
+    let key = b"YELLOW SUBMARINE";
+    let ciphertext = base64_decode("L77na/nrFsKvynd6HzOoG7GHTLXsTVu9qvY/2syLXzhPweyyMTJULu/6/kXX0KSvoOLSFQ==")?;
+    let plaintext = ctr_crypt(&ciphertext, key, &nonce.to_le_bytes())?;
+    println!("{:?}", String::from_utf8_lossy(&plaintext));
+    Ok(())
+}
