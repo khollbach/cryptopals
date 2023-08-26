@@ -1228,12 +1228,13 @@ fn ctr_crypt(plaintext: &[u8], key: &[u8], nonce: &[u8]) -> Result<Vec<u8>> {
 
 #[test]
 fn challenge_18() -> Result<()> {
-    let nonce: u64 = 0;
+    let nonce: u64 = 0; 
     let key = b"YELLOW SUBMARINE";
     let ciphertext =
         base64_decode("L77na/nrFsKvynd6HzOoG7GHTLXsTVu9qvY/2syLXzhPweyyMTJULu/6/kXX0KSvoOLSFQ==")?;
     let plaintext = ctr_crypt(&ciphertext, key, &nonce.to_le_bytes())?;
     println!("{:?}", String::from_utf8_lossy(&plaintext));
+    
     Ok(())
 }
 
@@ -1284,3 +1285,5 @@ fn test_get_cols(input: &[&[u8]], expected: &[&[u8]]) {
     let actual = get_cols(input);
     assert_eq!(expected, actual);
 }
+
+mod mt;
