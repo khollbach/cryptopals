@@ -1,3 +1,4 @@
+// This is just to suppress compiler warnings for "unused" non-#[test] code.
 #![cfg(test)]
 
 use std::{
