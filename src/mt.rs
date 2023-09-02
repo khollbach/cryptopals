@@ -1,3 +1,4 @@
+use std::io::Read;
 const W: u32 = 32;
 const N: u32 = 624;
 const M: u32 = 397;
@@ -64,24 +65,27 @@ impl MersenneTwister19937 {
         }
     
         let mut y = self.mt[self.index];
-        y ^= (y >> U) & D; // U=11 D=all_ones
-        y ^= (y << S) & B; // S=7  B=9D2C_5680
-        y ^= (y << T) & C;
-        y ^= y >> L;
-
         self.index += 1;
-        y
+        temper(y)
     }
 }
 
-fn invert_temper(mut y: u32) -> u32 {
+fn temper(mut y: u32) -> u32 {
+    y ^= (y >> U) & D; // U=11 D=all_ones
+    y ^= (y << S) & B; // S=7  B=9D2C_5680
+    y ^= (y << T) & C;
+    y ^= y >> L;
+    y
+}
 
-    y = invert_xor_shift_right_and_mask(y, L, 0);
+fn invert_temper(mut y: u32) -> u32 {
+    y = invert_xor_shift_right_and_mask(y, L, !0);
     y = invert_xor_shift_left_and_mask(y, T, C);
     y = invert_xor_shift_left_and_mask(y, S, B);
     y = invert_xor_shift_right_and_mask(y, U, D);
     y
 }
+
 
 /// Inverse of x ^= (x >> shift) & mask
 fn invert_xor_shift_right_and_mask(x: u32, shift: u32, mask: u32) -> u32 {
@@ -113,6 +117,13 @@ fn invert_xor_shift_left_and_mask(x: u32, shift: u32, mask: u32) -> u32 {
 
     }
     res
+}
+
+#[test]
+fn test_invert_temper() {
+    for i in 0.. 2u32.pow(20) {
+        assert_eq!(i, invert_temper(temper(i)));
+    }
 }
 
 #[test]
@@ -150,6 +161,131 @@ fn compare_to_test_vector(){
 
 #[test]
 fn challenge_22 (){
+    let target = {
+        let random_time = 123498798;
 
-    
+        let mut rng = MersenneTwister19937::default();
+        rng.seed(random_time);
+        rng.extract()
+    };
+
+    let end_time = 123498798 + 1900;
+
+    for i in end_time - 2000.. end_time {
+        let mut rng = MersenneTwister19937::default();
+
+        rng.seed(i as u32);
+        let y = rng.extract();
+
+        if y == target {
+            eprintln!("Seed is probably {i}");
+            assert_eq!(i, 123498798);
+            return
+        }
+    }
+    panic!("Failed to find seed");
+
+    // // Forwards was
+    // {
+    //     let x = self.mt[0] & UPPER_MASK | self.mt[1] & LOWER_MASK;
+    //     x_a = x >> 1;
+    //     if x % 2 != 0 {
+    //         x_a = x_a ^ A
+    //     }
+    //     self.mt[0] = self.mt[M] % x_a
+    // }
+
+    //t_0 = invert_temper(out);
+    // GOAL: Find seed from out.
+}
+
+fn crypt_mt(key: u32, plaintext: Vec<u8>) -> Vec<u8> {
+    let mut bytes = plaintext;
+    let mut rng = MersenneTwister19937::default();
+    rng.seed(key);
+    for b in &mut bytes {
+        *b ^= (rng.extract() % 256) as u8
+    }
+    bytes
+}
+
+trait ReadArray: Read {
+    fn read_array<const N: usize>(&mut self) -> std::io::Result<[u8; N]>;
+
+    fn read_le_u8(&mut self) -> std::io::Result<u8> {
+        Ok(self.read_array::<1>()?[0])
+    }
+
+    fn read_le_u16(&mut self) -> std::io::Result<u16> {
+        Ok(u16::from_le_bytes(self.read_array::<2>()?))
+    }
+
+    fn read_le_u128(&mut self) -> std::io::Result<u128> {
+        Ok(u128::from_le_bytes(self.read_array::<16>()?))
+    }
+}
+
+impl<T: Read> ReadArray for T {
+    fn read_array<const N: usize>(&mut self) -> std::io::Result<[u8; N]> {
+        let mut arr = [0; N];
+        self.read_exact(&mut arr)?;
+        Ok(arr)
+    }
+}
+
+#[test]
+fn challenge_24_a() {
+    let known_text = b"aaaaaaaaaaaaaa";
+
+    let mut urandom = std::fs::File::open("/dev/urandom").unwrap();
+    // let mut randLen: = [u8; 100];
+    let key = urandom.read_le_u16().unwrap();
+    let prefixLen = urandom.read_le_u8().unwrap();
+    let mut plaintext: Vec<u8> = urandom.bytes().take(prefixLen as usize).collect::<Result<_, _>>().unwrap();
+    plaintext.extend_from_slice(known_text);
+    let ciphertext = crypt_mt(key as u32, plaintext);
+
+    for potential_key in 0.. 2u32.pow(16) {
+        let mut rng = MersenneTwister19937::default();
+        rng.seed(potential_key as u32);
+        let mut bytes: Vec<u8> = std::iter::from_fn(|| Some(rng.extract() as u8)).take(ciphertext.len()).collect();
+        crate::xor_in_place(&mut bytes, &ciphertext);
+        if &bytes[bytes.len() - known_text.len()..] == known_text {
+            assert_eq!(potential_key as u16, key);
+            return
+        }
+    }
+    panic!("Failed to find key");
+}
+
+#[test]
+fn challenge_23() {
+    let mut original_rng = MersenneTwister19937::default();
+    let output: [u32; N as usize] = std::array::from_fn(|_| original_rng.extract());
+    let untempered = output.map(invert_temper);
+    let mut new_rng = MersenneTwister19937::default();
+    new_rng.mt = untempered;
+
+    assert_eq!(new_rng.index, original_rng.index);
+    assert_eq!(new_rng.mt[..5], original_rng.mt[..5]);
+
+    for i in 0..888 {
+        assert_eq!(original_rng.extract(), new_rng.extract());
+    }
+}
+
+#[ignore] // Not one to one, panics.
+#[test]
+fn is_it_1_to_1() {
+    let mut out = vec![None; 2usize.pow(32)];
+    let mut rng = MersenneTwister19937::default();
+    for i in 0.. 2usize.pow(32) {
+        rng.seed(i as u32);
+        let y = rng.extract();
+        if let Some(j) = out[y as usize] {
+            panic!("{j} == {i}");
+        } else {
+            out[y as usize] = Some(i as u32)
+        }   
+    }
 }

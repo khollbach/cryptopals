@@ -110,7 +110,7 @@ fn key_score(encoded_bytes: &[u8], key: u8) -> u32 {
 
 /// Score `s` based on letter frequencies.
 ///
-/// English text should have a higher score than random noise.
+// English text should have a higher score than random noise.
 fn text_score(s: &[u8]) -> u32 {
     s.iter().copied().map(letter_score).sum()
 }
